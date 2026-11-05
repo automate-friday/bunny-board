@@ -1,0 +1,15 @@
+# Only for networks behind a TLS-intercepting proxy: trust its CA at runtime too.
+#   EXTRA_CA_CERTS_FILE=/path/to/ca.crt docker compose -f docker-compose.yml -f compose.ca.yml up -d --build
+# (The same variable feeds the extra_ca build secret in docker-compose.yml.)
+services:
+  board:
+    environment:
+      NODE_EXTRA_CA_CERTS: /etc/ssl/extra-ca.crt
+    volumes:
+      - ${EXTRA_CA_CERTS_FILE:?set EXTRA_CA_CERTS_FILE}:/etc/ssl/extra-ca.crt:ro
+  runtime:
+    environment:
+      NODE_EXTRA_CA_CERTS: /etc/ssl/extra-ca.crt
+      SSL_CERT_FILE: /etc/ssl/extra-ca.crt
+    volumes:
+      - ${EXTRA_CA_CERTS_FILE:?set EXTRA_CA_CERTS_FILE}:/etc/ssl/extra-ca.crt:ro

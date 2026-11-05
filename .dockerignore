@@ -1,0 +1,13 @@
+# Build context for deploy/compose/Dockerfile (the repo root).
+.git
+.worktrees
+**/node_modules
+server/dist
+canvas/dist
+proof
+test/.unit.cjs
+deploy/compose/.env
+# Secrets: the licence key reaches the build only as a secret mount, the app auth file
+# only through env_file at run time. Never copy them into the image or build cache.
+deploy/compose/board-auth.env
+deploy/compose/tldraw-license.txt

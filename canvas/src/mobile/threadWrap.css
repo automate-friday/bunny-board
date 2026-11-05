@@ -1,0 +1,25 @@
+/* Phone thread sheet (Sidebar with data-sheet="1"): never wider than the phone. Long URLs,
+   paths and inline code wrap; code blocks and tables scroll inside their own box; images and
+   anything else shrink to the column. The thread itself only scrolls up and down. */
+html.bunny-mobile [data-testid=sidebar][data-sheet="1"] { max-width: 100vw; overflow-x: hidden; }
+html.bunny-mobile [data-testid=sidebar][data-sheet="1"] [data-testid=sidebar-scroll-content] { overflow-x: hidden; }
+html.bunny-mobile [data-testid=sidebar][data-sheet="1"] [data-testid=sidebar-scroll-content] * { min-width: 0; max-width: 100%; box-sizing: border-box; }
+html.bunny-mobile [data-testid=sidebar][data-sheet="1"] [data-testid=sidebar-scroll-content] :where(p, li, a, span, div, summary, blockquote) { overflow-wrap: anywhere; }
+html.bunny-mobile [data-testid=sidebar][data-sheet="1"] :where(.message-markdown, .message-raw) a,
+html.bunny-mobile [data-testid=sidebar][data-sheet="1"] :where(.message-markdown) :not(pre) > code { word-break: break-all; overflow-wrap: anywhere; }
+html.bunny-mobile [data-testid=sidebar][data-sheet="1"] .message-markdown pre { white-space: pre; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+html.bunny-mobile [data-testid=sidebar][data-sheet="1"] table { display: block; overflow-x: auto; overscroll-behavior-x: contain; }
+html.bunny-mobile [data-testid=sidebar][data-sheet="1"] :where(img, video, svg, canvas) { max-width: 100%; height: auto; }
+
+/* Thread tools (ThreadTools.tsx). */
+.bm-title-edit { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.bm-title-edit input { flex: 1; min-width: 0; min-height: 40px; box-sizing: border-box; padding: 6px 10px; border: 2px solid #8875F6; border-radius: 10px; font: 600 16px system-ui, sans-serif; color: #0f172a; background: #fff; -webkit-user-select: text; user-select: text; }
+.bm-title-edit button { flex: none; min-height: 40px; min-width: 56px; border: 0; border-radius: 10px; background: #8875F6; color: #fff; font: 700 15px system-ui, sans-serif; cursor: pointer; }
+.bm-field-label { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: rgba(46,31,22,.6); }
+.bm-msg-layer { position: fixed; inset: 0; z-index: 1002; }
+.bm-msg-scrim { position: absolute; inset: 0; background: rgba(23,18,27,.18); }
+.bm-msg-menu { position: absolute; left: 16px; right: 16px; max-width: 360px; margin: 0 auto; display: flex; flex-direction: column; padding: 6px; background: #fff; border: 1px solid rgba(46,31,22,.12); border-radius: 14px; box-shadow: 0 12px 34px rgba(46,31,22,.22); font: 15px system-ui, sans-serif; }
+.bm-msg-menu button { min-height: 48px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; text-align: left; font: 600 15px system-ui, sans-serif; color: #2E1F16; cursor: pointer; }
+.bm-msg-menu button:active { background: #EFE8FE; }
+.bm-menu-action { display: block; width: 100%; min-height: 44px; text-align: left; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; color: #0f172a; font: 600 14px system-ui, sans-serif; cursor: pointer; }
+.bm-menu-action[data-tone=primary] { background: #8875F6; border-color: #8875F6; color: #fff; }

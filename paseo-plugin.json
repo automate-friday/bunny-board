@@ -1,0 +1,9 @@
+{
+  "id": "board",
+  "name": "Bunny by Automate Friday",
+  "description": "The magic whiteboard: draw, plan and work with AI agents in frames",
+  "media": [],
+  "requirements": {
+    "paseo": ">=0.10.2"
+  }
+}

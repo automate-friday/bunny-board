@@ -1,0 +1,4 @@
+.env
+extra-ca.crt
+board-auth.env
+tldraw-license.txt

@@ -1,0 +1,22 @@
+/* Tell Bunny (TellBunny.tsx): the sheet's route cards, the send toast, Bunny on the tiles bar. */
+.bm-tell-title { display: inline-flex; align-items: center; gap: 8px; }
+.bm-tell-photo { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; min-height: 44px; padding: 0 14px; border: 1px solid rgba(46,31,22,.18); border-radius: 12px; background: #fff; color: #2E1F16; font: 600 15px Inter, system-ui, sans-serif; cursor: pointer; }
+.bm-tell-route { display: flex; flex-direction: column; gap: 12px; }
+.bm-tell-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid #8875F6; border-radius: 14px; background: #fff; font-size: 16px; }
+.bm-tell-card small { font-size: 13px; color: rgba(46,31,22,.7); overflow-wrap: anywhere; }
+.bm-tell-card .bm-start-go { min-height: 48px; border-radius: 12px; margin-top: 4px; font: 700 16px Inter, system-ui, sans-serif; cursor: pointer; }
+.bm-tell-alts { display: flex; flex-direction: column; gap: 6px; }
+.bm-tell-alts button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-height: 52px; padding: 8px 12px; border: 1px solid rgba(46,31,22,.15); border-radius: 12px; background: #fff; text-align: left; font: 600 15px Inter, system-ui, sans-serif; color: #2E1F16; cursor: pointer; }
+.bm-tell-alts small { font-size: 12px; font-weight: 500; color: rgba(46,31,22,.6); }
+.bm-tell-link { align-self: flex-start; min-height: 44px; border: 0; background: none; padding: 0 2px; color: #6F5CE6; font: 600 14px Inter, system-ui, sans-serif; text-decoration: underline; cursor: pointer; }
+.bm-tell-toast {
+  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 96px); transform: translateX(-50%); z-index: 1004; width: min(420px, calc(100vw - 24px)); box-sizing: border-box; overflow: hidden;
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 14px; background: #2E1F16; color: #FFF8EB; font: 14px/1.3 Inter, system-ui, sans-serif; box-shadow: 0 10px 30px rgba(46,31,22,.3);
+}
+.bm-tell-toast > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.bm-tell-toast button { flex: none; min-height: 40px; padding: 0 10px; border: 0; border-radius: 10px; background: rgba(255,248,235,.14); color: #FFF8EB; font: 700 14px Inter, system-ui, sans-serif; cursor: pointer; }
+.bm-tell-toast[data-phase=failed] { background: #7f1d1d; }
+.bm-tell-count { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: linear-gradient(90deg, #8875F6, #F7A0CA, #FF9F7A); transform-origin: left; animation: bm-tell-count linear forwards; }
+@keyframes bm-tell-count { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.bm-tell { flex: none; width: 52px; height: 52px; border-radius: 26px; border: 0; padding: 0; display: grid; place-items: center; background: #FFF8EB; box-shadow: 0 6px 16px rgba(46,31,22,.18), 0 0 0 1px rgba(46,31,22,.06); cursor: pointer; }
+.bm-home-bar { gap: 12px; align-items: center; }

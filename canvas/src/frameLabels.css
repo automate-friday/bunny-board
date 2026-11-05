@@ -1,0 +1,14 @@
+/* Narrow columns keep the complete label. Fit contents reserves heading space
+   inside an enclosing frame; it remains an explicit, lock-aware user action. */
+.tl-frame-heading-hit-area:has(.tl-frame-label:not(.tl-frame-label__editing)) {
+  height: auto;
+  min-height: var(--tl-frame-height);
+}
+.tl-frame-label:not(.tl-frame-label__editing) {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  line-height: 1.3;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}

@@ -1,0 +1,20 @@
+# Local build output
+node_modules/
+server/dist/
+canvas/dist/
+
+# Installation secrets and local overrides. Keep .env.example tracked.
+.env
+.env.*
+!.env.example
+board-auth.env
+tldraw-license.txt
+extra-ca.crt
+*.key
+*.pem
+
+# Keep full installation backups outside the source checkout.
+backups/
+*.tar
+*.tar.gz
+*.tgz

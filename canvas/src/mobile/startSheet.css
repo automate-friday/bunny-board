@@ -1,0 +1,118 @@
+/* Phone shell start sheet (StartSheet.tsx). Fixed to the visual viewport (top and height set
+   inline), above the shell's bars, the spotlight and tldraw's in-canvas panels. */
+.bm-start-layer {
+  position: fixed; left: 0; right: 0; z-index: 1000;
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
+  font: 14px/1.3 Inter, system-ui, -apple-system, sans-serif; color: #2E1F16;
+}
+.bm-start-scrim { position: absolute; inset: 0; background: rgba(23,18,27,.32); }
+.bm-start-sheet {
+  position: relative; width: 100%; max-width: 560px; max-height: calc(100% - env(safe-area-inset-top) - 8px); box-sizing: border-box;
+  display: flex; flex-direction: column; background: #FFF8EB; border-radius: 20px 20px 0 0;
+  box-shadow: 0 -12px 40px rgba(46,31,22,.25); animation: bm-up .18s ease-out;
+}
+.bm-start-head { flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 16px 4px; }
+.bm-start-head .bm-grip-bar { width: 40px; height: 5px; border-radius: 3px; background: rgba(46,31,22,.25); margin-bottom: 4px; }
+.bm-start-head b { font-size: 17px; }
+.bm-start-head small { font-size: 12px; color: rgba(46,31,22,.6); }
+.bm-start-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 10px; padding: 6px calc(env(safe-area-inset-right) + 16px) 10px calc(env(safe-area-inset-left) + 16px);
+}
+.bm-start-row { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.bm-start-row > div { flex: 1; min-width: 0; }
+.bm-start-row button { min-height: 40px; }
+.bm-start-text {
+  box-sizing: border-box; width: 100%; min-height: 76px; resize: none; padding: 10px 12px; border: 1px solid rgba(46,31,22,.18); border-radius: 12px;
+  background: #fff; color: inherit; font: 16px/1.35 Inter, system-ui, sans-serif; -webkit-user-select: text; user-select: text;
+}
+.bm-start-seg { display: flex; gap: 8px; }
+.bm-start-seg label {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; border-radius: 12px; cursor: pointer;
+  border: 1px solid rgba(46,31,22,.18); background: #fff; font-weight: 600;
+}
+.bm-start-seg label[data-on=true] { background: #EFE8FE; border-color: #8875F6; color: #6F5CE6; }
+.bm-start-seg input { position: absolute; opacity: 0; pointer-events: none; }
+.bm-start-foot {
+  flex: none; display: flex; gap: 10px; padding: 10px calc(env(safe-area-inset-right) + 16px) calc(env(safe-area-inset-bottom) + 10px) calc(env(safe-area-inset-left) + 16px);
+  border-top: 1px solid rgba(46,31,22,.12); background: #FFF8EB;
+}
+.bm-start-foot button { flex: 1; min-height: 48px; border-radius: 14px; font: 700 16px Inter, system-ui, sans-serif; cursor: pointer; }
+.bm-start-cancel { border: 1px solid rgba(46,31,22,.18); background: #fff; color: #2E1F16; }
+.bm-start-go { border: 1px solid #8875F6; background: #8875F6; color: #fff; }
+.bm-start-go:disabled { opacity: .55; cursor: default; }
+@keyframes bm-up { from { transform: translateY(40px); opacity: .6; } }
+@media (orientation: landscape) {
+  .bm-start-head { padding-top: 4px; }
+  .bm-start-head small { display: none; }
+  .bm-start-text { min-height: 52px; }
+  .bm-start-foot { padding-top: 6px; padding-bottom: calc(env(safe-area-inset-bottom) + 6px); }
+  .bm-start-foot button { min-height: 44px; }
+}
+.bm-start-label { display: flex; align-items: center; justify-content: space-between; margin-bottom: -4px; }
+.bm-start-refresh { width: 44px; height: 36px; border: 0; background: transparent; font-size: 18px; color: rgba(46,31,22,.6); cursor: pointer; }
+.bm-start-wrap { flex-wrap: wrap; }
+.bm-start-seg button {
+  flex: 1 1 auto; min-height: 44px; padding: 0 14px; border-radius: 12px; cursor: pointer;
+  border: 1px solid rgba(46,31,22,.18); background: #fff; font: 600 14px Inter, system-ui, sans-serif; color: #2E1F16;
+}
+.bm-start-seg button[data-on=true] { background: #EFE8FE; border-color: #8875F6; color: #6F5CE6; }
+.bm-start-seg button:disabled { opacity: .5; cursor: default; }
+.bm-start-note { font-size: 12px; color: #2E1F16; background: #fff; border-radius: 10px; padding: 6px 10px; }
+.bm-start-runs { font-size: 13px; color: rgba(46,31,22,.75); }
+
+/* Never wider than the phone: the sheet and its rows shrink and wrap instead of pushing the
+   page sideways (Start cut off, the header and quick switch scrolled off to the right). */
+html.bunny-mobile, html.bunny-mobile body { overflow-x: hidden; overscroll-behavior-x: none; }
+.bm-start-layer { overflow: hidden; }
+.bm-start-sheet { width: 100%; max-width: min(560px, 100vw); }
+.bm-start-body > *, .bm-start-foot > *, .bm-start-seg > * { min-width: 0; }
+.bm-start-seg button, .bm-start-seg label { overflow-wrap: anywhere; }
+.bm-start-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.bm-start-input {
+  box-sizing: border-box; width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid rgba(46,31,22,.18); border-radius: 12px;
+  background: #fff; color: inherit; font: 600 16px Inter, system-ui, sans-serif; -webkit-user-select: text; user-select: text;
+}
+
+/* Model picker (ModelSheet.tsx): a full-width trigger and its own sheet over the start sheet. */
+.bm-model-trigger {
+  display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box; min-height: 48px; padding: 0 14px; cursor: pointer;
+  border: 1px solid rgba(46,31,22,.18); border-radius: 12px; background: #fff; color: #2E1F16; font: 600 16px Inter, system-ui, sans-serif; text-align: left; opacity: 1;
+}
+.bm-model-trigger i { flex: none; width: 10px; height: 10px; border-radius: 5px; background: #8875F6; }
+.bm-model-trigger span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-model-trigger[aria-busy=true] span { color: rgba(46,31,22,.6); font-weight: 500; }
+.bm-model-trigger b { flex: none; font-size: 13px; color: #6F5CE6; }
+.bm-model-layer { position: fixed; inset: 0; z-index: 1010; font: 14px/1.3 Inter, system-ui, -apple-system, sans-serif; color: #2E1F16; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; overflow: hidden; }
+.bm-model-sheet {
+  position: relative; width: 100%; max-width: min(560px, 100vw); max-height: calc(100% - 12px); box-sizing: border-box;
+  display: flex; flex-direction: column; background: #FFF8EB; border-radius: 20px 20px 0 0; box-shadow: 0 -12px 40px rgba(46,31,22,.25); animation: bm-up .18s ease-out;
+}
+.bm-model-tabs { flex: none; display: flex; gap: 8px; overflow-x: auto; padding: 4px calc(env(safe-area-inset-right) + 16px) 8px calc(env(safe-area-inset-left) + 16px); scrollbar-width: none; }
+.bm-model-tabs button {
+  flex: none; display: flex; flex-direction: column; align-items: flex-start; min-height: 48px; padding: 6px 14px; border-radius: 12px; cursor: pointer;
+  border: 1px solid rgba(46,31,22,.18); background: #fff; font: 600 15px Inter, system-ui, sans-serif; color: #2E1F16;
+}
+.bm-model-tabs button[aria-selected=true] { background: #EFE8FE; border-color: #8875F6; color: #6F5CE6; }
+.bm-model-tabs button:disabled { opacity: .5; }
+.bm-model-tabs small { font-size: 11px; font-weight: 500; color: rgba(46,31,22,.6); }
+.bm-model-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 2px; padding: 0 calc(env(safe-area-inset-right) + 12px) 8px calc(env(safe-area-inset-left) + 12px); }
+.bm-model-list button {
+  display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 12px; border: 0; border-radius: 12px; background: transparent; cursor: pointer; text-align: left;
+  font: 600 16px Inter, system-ui, sans-serif; color: #2E1F16;
+}
+.bm-model-list button[aria-selected=true] { background: #EFE8FE; }
+.bm-model-list button > span { flex: 1; min-width: 0; }
+.bm-model-list small { display: block; font-size: 12px; font-weight: 500; color: rgba(46,31,22,.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-model-list em { font-style: normal; font-size: 11px; font-weight: 700; background: #FFE08A; border-radius: 999px; padding: 2px 8px; }
+.bm-model-list b { color: #8875F6; }
+.bm-model-list p { margin: 6px 4px; font-size: 12px; color: #2E1F16; background: #FFE7DC; border-radius: 10px; padding: 6px 10px; }
+.bm-start-wrap button { flex: 0 0 auto; white-space: nowrap; }
+.bm-start-runs, .bm-start-note { overflow-wrap: anywhere; }
+
+.bm-start-seg .bm-start-refresh { flex: none; width: 36px; min-height: 36px; padding: 0; }
+@media (orientation: landscape) { .bm-start-head small[data-testid=start-where], .bm-start-head small[data-testid=start-photos] { display: block; } }
+
+/* Never taller than the smallest viewport (Safari's bars shown): the footer (Cancel, Start)
+   stays above Safari's bottom bar even when it slides back in. */
+.bm-start-layer { max-height: 100svh; }

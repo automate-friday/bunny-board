@@ -1,0 +1,37 @@
+# Front door for the board. PUBLIC_HOST unset: plain HTTP on :80 (published on
+# BOARD_HTTP_PORT). PUBLIC_HOST=board.example.com: Caddy gets a TLS certificate for it
+# (publish 80 and 443; the DNS name must point at this machine).
+# BOARD_AUTH=on puts HTTP basic auth in front of everything but the frame-token agent API
+# (BOARD_AUTH_USER, BOARD_AUTH_HASH). Any other BOARD_AUTH value is a config error.
+{
+	admin off
+}
+
+(auth-off) {
+}
+
+# Frame agents call /api/agent/* with their own bearer token (checked by the board), which
+# basic auth would reject; every other path needs the password. All three must hold:
+#  - `path` cleans the path first, so /api/agent/../ui and %2e%2e are not exempt, but it
+#    ignores case and merges slashes;
+#  - `path_regexp` (RE2, case-sensitive) keeps /API/AGENT/ behind the password, but it
+#    also sees the cleaned path;
+#  - the raw request target as sent (`orig_uri`) must start with exactly /api/agent/, so
+#    //api/agent/, /api%2Fagent/ and the like (which the board would not route as agent
+#    calls, and would answer with the canvas page) need the password too.
+(auth-on) {
+	@needs_auth not {
+		path /api/agent/*
+		path_regexp agent_api ^/api/agent/
+		expression {http.request.orig_uri}.startsWith("/api/agent/")
+	}
+	basic_auth @needs_auth {
+		{$BOARD_AUTH_USER:board} {$BOARD_AUTH_HASH}
+	}
+}
+
+{$PUBLIC_HOST::80} {
+	import auth-{$BOARD_AUTH:off}
+	encode zstd gzip
+	reverse_proxy board:8793
+}

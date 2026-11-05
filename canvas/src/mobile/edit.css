@@ -1,0 +1,88 @@
+/* Phone editing (AddSheet.tsx): the lift, the chips above the bar, the + Add sheet, and the
+   bar's Add / Undo / Redo. Only mounted inside the phone shell. */
+
+/* The picked-up shape: lifted off the board with a violet outline and a shadow. */
+.bm-lift {
+  position: fixed; z-index: 320; pointer-events: none; box-sizing: border-box;
+  border: 2px solid #8875F6; border-radius: 10px; background: rgba(136,117,246,.06);
+  box-shadow: 0 10px 26px rgba(46,31,22,.22), 0 0 0 4px rgba(136,117,246,.18);
+  animation: bm-lift .16s ease-out;
+}
+/* Resize mode: a dashed outline, so the mode shows on the shape too. */
+.bm-lift[data-mode="resize"] { border-style: dashed; border-color: #6F5CE6; background: rgba(111,92,230,.08); }
+.bm-lift[data-dragging="1"] { box-shadow: 0 18px 38px rgba(46,31,22,.28), 0 0 0 5px rgba(136,117,246,.24); }
+@keyframes bm-lift { from { transform: scale(.94); opacity: .3; } }
+.bm-arrow-from {
+  position: fixed; z-index: 320; pointer-events: none; width: 18px; height: 18px; margin: -9px 0 0 -9px;
+  border-radius: 50%; background: #8875F6; box-shadow: 0 0 0 6px rgba(136,117,246,.25);
+}
+
+/* Done / Delete (and the arrow and pen modes' hints) just above the bottom bar. */
+.bm-edit-chips {
+  position: fixed; z-index: 375; left: 50%; transform: translateX(-50%);
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px; width: max-content; max-width: calc(100vw - 24px);
+  font: 14px/1.3 Inter, system-ui, -apple-system, sans-serif; color: #2E1F16; -webkit-user-select: none; user-select: none;
+}
+/* Only the buttons take touches: the hint and the gaps let them through to a handle beneath. */
+.bm-edit-chips { pointer-events: none; }
+.bm-edit-chips button { pointer-events: auto; }
+.bm-edit-hint { flex-basis: 100%; text-align: center; font-size: 12px; color: rgba(46,31,22,.7); }
+.bm-edit-chips button {
+  min-height: 44px; min-width: 96px; padding: 0 20px; border-radius: 999px; cursor: pointer;
+  font: 700 15px Inter, system-ui, sans-serif; box-shadow: 0 6px 18px rgba(46,31,22,.18);
+}
+.bm-edit-done { border: 0; background: #8875F6; color: #fff; }
+.bm-edit-delete { border: 1px solid #f3c1c1; background: #fff; color: #b42318; }
+/* Four chips (Undo, Resize, Delete, Done) fit a 390 px phone. */
+.bm-edit-chips[data-testid="mobile-held-chips"] button { min-width: 0; padding: 0 16px; }
+.bm-edit-chips .bm-edit-resize { border: 1px solid #c9bffb; background: #fff; color: #6F5CE6; }
+.bm-edit-chips .bm-edit-resize[aria-pressed="true"] { background: #6F5CE6; border-color: #6F5CE6; color: #fff; }
+.bm-edit-resizing { color: #6F5CE6; font-weight: 700; font-size: 13px; }
+.bm-edit-resizing b { margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: #EFE8FE; font-variant-numeric: tabular-nums; }
+.bm-edit-chips .bm-edit-undo { min-width: 84px; border: 1px solid rgba(46,31,22,.18); background: #fff; color: #2E1F16; }
+.bm-edit-chips .bm-edit-undo:disabled { opacity: .45; }
+
+/* The + Add sheet. */
+.bm-edit-scrim { position: fixed; inset: 0; z-index: 390; background: rgba(23,18,27,.28); }
+.bm-add-sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 392; display: flex; flex-direction: column; gap: 10px;
+  padding: 8px calc(env(safe-area-inset-right) + 14px) calc(env(safe-area-inset-bottom) + 16px) calc(env(safe-area-inset-left) + 14px);
+  background: #FFF8EB; border-radius: 20px 20px 0 0; box-shadow: 0 -12px 40px rgba(46,31,22,.22);
+  font: 14px/1.3 Inter, system-ui, -apple-system, sans-serif; color: #2E1F16; animation: bm-up .18s ease-out;
+}
+.bm-add-sheet .bm-grip-bar { align-self: center; }
+.bm-add-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.bm-add-grid button {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 0 10px; min-height: 76px;
+  border: 1px solid rgba(46,31,22,.12); border-radius: 16px; background: #fff; cursor: pointer; color: #2E1F16;
+}
+.bm-add-grid button:active { background: #EFE8FE; }
+.bm-add-grid svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.bm-add-grid small { font: 600 13px Inter, system-ui, sans-serif; }
+.bm-add-text { display: flex; flex-direction: column; gap: 8px; }
+.bm-add-text textarea {
+  box-sizing: border-box; width: 100%; padding: 12px 14px; border: 1px solid rgba(46,31,22,.15); border-radius: 12px; background: #fff;
+  font: 16px Inter, system-ui, sans-serif; color: inherit; resize: none; -webkit-user-select: text; user-select: text;
+}
+.bm-add-actions { display: flex; gap: 10px; }
+.bm-add-actions button { flex: 1; min-height: 46px; border-radius: 14px; border: 1px solid rgba(46,31,22,.15); background: #fff; font: 700 15px Inter, system-ui, sans-serif; color: #2E1F16; cursor: pointer; }
+.bm-add-actions .bm-add-go { flex: 2; border: 0; background: #8875F6; color: #fff; }
+.bm-add-actions .bm-add-go:disabled { opacity: .5; }
+
+/* The bar: Undo / Redo as one compact pair, so Hand, Add, Start agent and Search keep room. */
+.bm-tools:has(.bm-history) { gap: 4px; }
+.bm-tools:has(.bm-history) > button { min-width: 50px; }
+.bm-tools:has(.bm-history) .bm-start { padding: 0 12px; font-size: 14px !important; min-width: 0; }
+.bm-history { flex: none; display: flex; border-radius: 14px; background: rgba(46,31,22,.05); }
+.bm-tools .bm-history button { min-width: 38px; width: 38px; min-height: 46px; padding: 0; justify-content: center; }
+.bm-tools .bm-history button:disabled { opacity: .3; cursor: default; }
+.bm-tools .bm-history svg { width: 22px; height: 22px; }
+
+/* Resize handles on the picked-up shape (ResizeHandles.tsx): a 44 px touch target, drawn small.
+   Above the lift (320), below the bars (bottom 370, chips 375, top 380, thread sheet 400): a
+   handle that reaches a bar never takes a tap meant for Undo or the thread. */
+.bm-handle { position: fixed; z-index: 365; display: flex; align-items: center; justify-content: center; touch-action: none; cursor: grab; -webkit-tap-highlight-color: transparent; }
+.bm-handle span { display: block; box-sizing: border-box; background: #fff; border: 2px solid #8875F6; box-shadow: 0 2px 6px rgba(46,31,22,.25); pointer-events: none; }
+.bm-handle[data-corner="1"] span { width: 16px; height: 16px; border-radius: 50%; }
+.bm-handle[data-handle="top"] span, .bm-handle[data-handle="bottom"] span { width: 24px; height: 10px; border-radius: 5px; }
+.bm-handle[data-handle="left"] span, .bm-handle[data-handle="right"] span { width: 10px; height: 24px; border-radius: 5px; }

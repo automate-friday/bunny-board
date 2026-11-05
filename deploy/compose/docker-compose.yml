@@ -1,0 +1,106 @@
+# Bunny: the board, an agent runtime and a proxy in front.
+#   cp .env.example .env && docker compose up -d --build
+#   docker compose run --rm runtime login
+# README.md has the quickstart, ARCHITECTURE.md the scaling notes.
+name: bunnyboard
+
+x-build: &build
+  context: ../..
+  dockerfile: deploy/compose/Dockerfile
+  secrets: [extra_ca, tldraw_license]
+
+services:
+  # The whiteboard: tldraw sync rooms, frame watcher, agent API, canvas. One per set of
+  # boards; it is the single writer for its boards (do not run two against one volume).
+  board:
+    build: { <<: *build, target: board }
+    image: ${BOARD_IMAGE:-bunnyboard/board:local}
+    restart: unless-stopped
+    environment:
+      RUNTIME_WS: ${RUNTIME_WS:-ws://runtime:6767/ws}
+      BOARD_PUBLIC_URL: ${BOARD_PUBLIC_URL:-http://localhost:8080}
+      BOARD_AGENT_URL: ${BOARD_AGENT_URL:-http://board:8793}
+      BOARD_DEFAULT_CWD: ${BOARD_DEFAULT_CWD:-/workspaces}
+      BOARD_FRAME_CONTEXT: ${BOARD_FRAME_CONTEXT:-}
+      BOARD_CWD_ROOT: ${BOARD_CWD_ROOT:-}
+      BOARD_MCP_ENTRY: ${BOARD_MCP_ENTRY:-}
+      BOARD_MCP_NODE: ${BOARD_MCP_NODE:-}
+      BOARD_HUMAN_NAME: ${BOARD_HUMAN_NAME:-}
+      BOARD_DEFAULT_PROVIDER: ${BOARD_DEFAULT_PROVIDER:-}
+      BOARD_ALLOWED_ORIGINS: ${BOARD_ALLOWED_ORIGINS:-}
+    # App basic auth (docs/AUTH.md). Only the keys written in board-auth.env reach the
+    # board: no file leaves both absent (auth off), an empty value makes the board refuse
+    # to start. Not passed through .env, where an unset key would arrive as "".
+    env_file:
+      - path: ./board-auth.env
+        required: false
+    volumes:
+      - board-state:/data/board
+      - workspaces:/workspaces
+    # Direct access to the board, bypassing the proxy: agents on another machine call
+    # the board's agent API here. Loopback only unless BOARD_DIRECT_PORT says otherwise.
+    ports:
+      - "${BOARD_DIRECT_PORT:-127.0.0.1:8793}:8793"
+    # Lets RUNTIME_WS name a daemon running natively on this host (ws://host.docker.internal:6767/ws).
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      runtime:
+        condition: service_started
+        required: false
+
+  # The agent runtime: a Paseo daemon that runs Claude Code and Codex agents. Started by
+  # the local-runtime profile (COMPOSE_PROFILES in .env). Leave the profile out and set
+  # RUNTIME_WS to use a runtime elsewhere (another host, or your Mac's Paseo).
+  runtime:
+    profiles: [local-runtime]
+    build: { <<: *build, target: runtime }
+    image: ${RUNTIME_IMAGE:-bunnyboard/runtime:local}
+    restart: unless-stopped
+    environment:
+      PASEO_ALLOWED_HOSTS: ${PASEO_ALLOWED_HOSTS:-runtime,localhost,127.0.0.1}
+    volumes:
+      - paseo-home:/home/node/.paseo
+      - agent-auth:/home/node/.agent-auth
+      - board-state:/data/board
+      - workspaces:/workspaces
+    # Not published: only the board talks to the daemon, over the compose network.
+    expose: ["6767"]
+
+  proxy:
+    image: ${PROXY_IMAGE:-caddy:2-alpine}
+    restart: unless-stopped
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:-:80}
+      BOARD_AUTH: ${BOARD_AUTH:-off}
+      BOARD_AUTH_USER: ${BOARD_AUTH_USER:-board}
+      BOARD_AUTH_HASH: ${BOARD_AUTH_HASH:-}
+    # Loopback only by default. Publishing on other interfaces (BOARD_HTTP_PORT=8080 or
+    # 0.0.0.0:8080) needs auth on first: README › Network boundary and authentication.
+    ports:
+      - "${BOARD_HTTP_PORT:-127.0.0.1:8080}:80"
+      - "${BOARD_HTTPS_PORT:-127.0.0.1:8443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [board]
+
+volumes:
+  board-state:
+  workspaces:
+  paseo-home:
+  agent-auth:
+  caddy-data:
+  caddy-config:
+
+secrets:
+  # Optional CA for TLS-intercepting proxies at build time. Unused, it is the empty
+  # no-extra-ca.crt next to this file (not /dev/null: Compose's bake builder refuses to read
+  # files outside this directory without --allow).
+  extra_ca:
+    file: ${EXTRA_CA_CERTS_FILE:-./no-extra-ca.crt}
+  # Your tldraw production licence key, one line, for the canvas build. Unset, it is the
+  # empty no-tldraw-license.txt: the canvas builds without a key and tldraw's own licence
+  # check decides (HTTPS without a key counts as unlicensed production). README › tldraw licence.
+  tldraw_license:
+    file: ${TLDRAW_LICENSE_KEY_FILE:-./no-tldraw-license.txt}

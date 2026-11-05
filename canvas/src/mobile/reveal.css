@@ -1,0 +1,11 @@
+/* "Where is it on the board" (Reveal.tsx): a pulse on the frame and a label, over the canvas. */
+.bm-reveal { position: absolute; inset: 0; z-index: 385; pointer-events: none; }
+.bm-reveal-pulse { position: absolute; box-sizing: border-box; border: 3px solid #8875F6; border-radius: 6px; box-shadow: 0 0 0 0 rgba(136,117,246,.55); animation: bm-reveal-pulse 1s ease-out infinite; pointer-events: none; }
+@keyframes bm-reveal-pulse { 0% { box-shadow: 0 0 0 0 rgba(136,117,246,.55); } 100% { box-shadow: 0 0 0 22px rgba(136,117,246,0); } }
+.bm-reveal-label {
+  position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 28px); transform: translateX(-50%); max-width: calc(100vw - 32px); box-sizing: border-box;
+  padding: 10px 16px; border-radius: 18px; width: max-content; background: #2E1F16; color: #FFF8EB; font: 600 14px/1.3 Inter, system-ui, sans-serif; text-align: center;
+  overflow-wrap: anywhere; box-shadow: 0 8px 24px rgba(46,31,22,.3); animation: bm-reveal-up .2s ease-out;
+}
+.bm-reveal-label b { font-weight: 750; }
+@keyframes bm-reveal-up { from { transform: translate(-50%, 30px); opacity: .6; } }
