@@ -10,6 +10,19 @@ boards, operator tools, and historical notes.
 development. A working localhost canvas does not prove production licensing.
 The exact source commit and file hashes are recorded in `RELEASE.json`.
 
+## Licence
+
+Bunny's code is source-available under the [Business Source License 1.1](LICENSE.md).
+Development and self-hosting for yourself or your organisation are free; offering
+a competing hosted or managed service is restricted by the Additional Use Grant.
+Each release converts to Apache-2.0 four years after its first public release.
+
+The tldraw canvas is covered by tldraw's own licence. Self-hosters must comply with
+its development terms or use their own applicable production licence key; Bunny's
+licence does not grant tldraw production rights. See
+[third-party requirements](docs/release/THIRD-PARTY.md).
+
+
 ## Try the candidate
 
 **Installing on a VPS? Start with [Install Bunny on a VPS](docs/install-vps.md).**

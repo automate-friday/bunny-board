@@ -1,6 +1,7 @@
 {
   "name": "bunny-canvas",
   "private": true,
+  "license": "BUSL-1.1",
   "type": "module",
   "scripts": { "build": "vite build", "dev": "vite --host 0.0.0.0" },
   "dependencies": {
