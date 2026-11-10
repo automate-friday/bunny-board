@@ -11,7 +11,7 @@ import { RemoteCoverage } from "../../RemoteCoverage";
 
 import { MessageBody } from "../../MessageBody";
 import { ChatComposer } from "../../ChatComposer";
-import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useEditor, useValue } from "tldraw";
 import { primerLabel } from "../../../../shared/components/transcript";
 import { StatusMark } from "../../Dot";
@@ -24,14 +24,16 @@ import { dedupeItemRows, groupRows, rowKey } from "../../timelineItems";
 import { useAgentControls } from "../../useAgentControls";
 import { AgentLiveStats } from "../../AgentControlsBar";
 import { PermissionCards } from "../../PermissionCards";
+import { chooseLastSent, useAgentSummary } from "../../lastSent";
+import { lastHumanMessage } from "../../../../shared/last-message";
 
 const ROW_STYLE: Record<string, React.CSSProperties> = {
-  user: { background: "#eef4ff", borderLeft: "3px solid #2f80ed" },
-  assistant: { background: "#ffffff", borderLeft: "3px solid #27ae60" },
-  tool: { color: "#666", fontFamily: "ui-monospace, monospace", fontSize: 11, background: "transparent" },
-  "plugin:board-delta": { background: "#fff8e6", borderLeft: "3px solid #f2994a" },
-  error: { color: "#c00", background: "#fff0f0" },
-  notice: { color: "#666", background: "transparent" },
+  user: { background: "light-dark(#eef4ff, var(--bunny-raised))", borderLeft: "3px solid light-dark(#2f80ed, hsl(214 35% 39%))" },
+  assistant: { background: "light-dark(#ffffff, var(--bunny-surface))", borderLeft: "3px solid light-dark(#27ae60, hsl(145 35% 39%))" },
+  tool: { color: "light-dark(#666, var(--bunny-muted))", fontFamily: "ui-monospace, monospace", fontSize: 11, background: "transparent" },
+  "plugin:board-delta": { background: "light-dark(#fff8e6, hsl(43 45% 21%))", borderLeft: "3px solid light-dark(#f2994a, hsl(28 35% 39%))" },
+  error: { color: "light-dark(#c00, hsl(0 88% 74%))", background: "light-dark(#fff0f0, var(--bunny-surface))" },
+  notice: { color: "light-dark(#666, var(--bunny-muted))", background: "transparent" },
 };
 
 // Not "real" rows for the compact card's last three (reasoning, todos, compaction markers).
@@ -41,13 +43,13 @@ const LABEL: Record<string, string> = { user: "you / board", assistant: "agent",
 
 const btn: React.CSSProperties = {
   pointerEvents: "all",
-  border: "1px solid #ccc",
-  background: "#fff",
+  border: "1px solid light-dark(#ccc, var(--bunny-line))",
+  background: "light-dark(#fff, var(--bunny-surface))",
   borderRadius: 5,
   padding: "1px 6px",
   font: "11px system-ui, sans-serif",
   cursor: "pointer",
-  color: "#333",
+  color: "light-dark(#333, var(--bunny-ink))",
   textDecoration: "none",
   whiteSpace: "nowrap",
 };
@@ -69,6 +71,11 @@ export function TranscriptRender({ shape }: { shape: TranscriptShape }) {
     return frame?.type === "frame" ? frame.props.name : "";
   }, [editor,bound?.frameId]);
   const conversationTitle = view?.title || frameTitle || `agent ${agentId.slice(0,8)}`;
+  // "You: …": the last message the person sent (shared/last-message.ts); from the card's own
+  // rows, else (older than they reach) from the agent summary, asked only while on screen.
+  const fromRows = useMemo(() => lastHumanMessage(view?.rows ?? []), [view?.rows]);
+  const summary = useAgentSummary(agentId, visible && !!view && !fromRows);
+  const lastSent = chooseLastSent(fromRows, null, summary?.lastUserMessage);
   const [, tick] = useState(0);
   const status = displayStatus(view, bound?.boundAt, bound?.status, bound?.subagents, bound?.cloudSessions, bound?.host);
   const label = statusLabel(status, subagentCount(view, bound?.subagents));
@@ -142,15 +149,15 @@ export function TranscriptRender({ shape }: { shape: TranscriptShape }) {
           ...(item && r.item?.type !== "assistant_message" ? {} : (ROW_STYLE[r.kind] ?? {})),
         }}
       >
-        {LABEL[r.kind] && !r.ack ? <span style={{ fontSize: 10, color: "#888", marginRight: 4 }}>{LABEL[r.kind]}</span> : null}
+        {LABEL[r.kind] && !r.ack ? <span style={{ fontSize: 10, color: "light-dark(#888, var(--bunny-muted))", marginRight: 4 }}>{LABEL[r.kind]}</span> : null}
         {item ? (
           <TimelineItemView row={r} ctx={{ agentId, compact: true, exact: exactRoute }} />
         ) : r.ack ? (
-          <span data-testid="transcript-ack" style={{ color: "#888", fontSize: 11 }} title={`The agent acknowledged the change without replying ("${r.text}")`}>
+          <span data-testid="transcript-ack" style={{ color: "light-dark(#888, var(--bunny-muted))", fontSize: 11 }} title={`The agent acknowledged the change without replying ("${r.text}")`}>
             <Emoji name="check" /> seen
           </span>
         ) : r.primer ? (
-          <span data-testid="transcript-primer" style={{ color: "#666", fontStyle: "italic" }}>
+          <span data-testid="transcript-primer" style={{ color: "light-dark(#666, var(--bunny-muted))", fontStyle: "italic" }}>
             {primerLabel(r)}
           </span>
         ) : r.kind === "tool" ? (
@@ -177,29 +184,30 @@ export function TranscriptRender({ shape }: { shape: TranscriptShape }) {
         height: "100%",
         display: "flex",
         flexDirection: "column",
-        background: "#fbfbfa",
-        border: `2px solid ${STATUS_DOT[status] ?? "#ccc"}`,
+        background: "light-dark(#fbfbfa, var(--bunny-surface))",
+        border: `2px solid ${STATUS_DOT[status] ?? "light-dark(#ccc, var(--bunny-line))"}`,
         borderRadius: 10,
         boxShadow: "0 2px 10px rgba(0,0,0,0.10)",
         overflow: "hidden",
         font: "12px system-ui, sans-serif",
-        color: "#222",
+        color: "light-dark(#222, var(--bunny-ink))",
       }}
     >
       <TranscriptAvailability view={view}/>
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, padding: "6px 8px", borderBottom: "1px solid #e4e4e4", background: "#fff", flexShrink: 0 }}>
-        <StatusMark status={status} color={STATUS_DOT[status] ?? "#ccc"} title={label} />
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, padding: "6px 8px", borderBottom: "1px solid light-dark(#e4e4e4, var(--bunny-line))", background: "light-dark(#fff, var(--bunny-surface))", flexShrink: 0 }}>
+        <StatusMark status={status} color={STATUS_DOT[status] ?? "light-dark(#ccc, var(--bunny-muted))"} title={label} />
         <span data-testid="transcript-title" title={`${conversationTitle} · ${agentId}`} style={{ fontWeight: 600, flex: "1 1 120px", minWidth: 120, overflowWrap: "anywhere" }}>
           {conversationTitle}
-          <small data-testid="transcript-identity" style={{display:"block",fontWeight:400,color:"#666"}}>Conversation {agentId.slice(0, 8)}</small>
+          <small data-testid="transcript-identity" style={{display:"block",fontWeight:400,color:"light-dark(#666, var(--bunny-muted))"}}>Conversation {agentId.slice(0, 8)}</small>
+          {lastSent ? <small data-testid="transcript-you" title={lastSent.text} style={{ display: "block", fontWeight: 400, color: "light-dark(#888, var(--bunny-muted))", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>You: {lastSent.text}</small> : null}
         </span>
         <HostConnectionBadge view={view}/>
-        <span data-testid="transcript-status" style={{ color: "#777", fontSize: 11, whiteSpace: "nowrap" }}>
+        <span data-testid="transcript-status" style={{ color: "light-dark(#777, var(--bunny-muted))", fontSize: 11, whiteSpace: "nowrap" }}>
           {remoteStatusLabel(view?.remote ?? (bound?.host ? {host:bound.host,polledAt:null} : undefined),label)}
           {view && !view.remote ? <AgentLiveStats view={view} status={status} /> : null}
         </span>
         {busy && !view?.remote && capabilities.can("stop") ? (
-          <button type="button" data-testid="transcript-stop" style={{ ...btn, borderColor: "#eb5757", color: "#c62828" }} onPointerDown={stopDown} onClick={() => void stop()} disabled={stopping}>
+          <button type="button" data-testid="transcript-stop" style={{ ...btn, borderColor: "light-dark(#eb5757, hsl(0 35% 39%))", color: "light-dark(#c62828, hsl(0 66% 74%))" }} onPointerDown={stopDown} onClick={() => void stop()} disabled={stopping}>
             {stopping ? "Stopping…" : "Stop"}
           </button>
         ) : null}
@@ -214,7 +222,7 @@ export function TranscriptRender({ shape }: { shape: TranscriptShape }) {
           {mode === "compact" ? "Full" : "Compact"}
         </button>
         {mode === "full" ? (
-          <button type="button" data-testid="transcript-follow" style={{ ...btn, background: follow ? "#eef4ff" : "#fff" }} onPointerDown={stopDown} onClick={() => setView({ follow: !follow })} title="Auto-scroll to the newest row">
+          <button type="button" data-testid="transcript-follow" style={{ ...btn, background: follow ? "light-dark(#eef4ff, var(--bunny-raised))" : "light-dark(#fff, var(--bunny-surface))" }} onPointerDown={stopDown} onClick={() => setView({ follow: !follow })} title="Auto-scroll to the newest row">
             {follow ? "Following" : "Follow"}
           </button>
         ) : null}
@@ -226,7 +234,7 @@ export function TranscriptRender({ shape }: { shape: TranscriptShape }) {
         style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 6, display: "flex", flexDirection: "column", gap: 4, pointerEvents: "all", justifyContent: "flex-start" }}
       >
         {shown.length === 0 ? (
-          <div style={{ color: "#999", padding: 4 }}>{status === "starting" ? "Starting the agent…" : view?.error && status === "missing" ? view.error : view ? "No messages yet." : "Connecting…"}</div>
+          <div style={{ color: "light-dark(#999, var(--bunny-muted))", padding: 4 }}>{status === "starting" ? "Starting the agent…" : view?.error && status === "missing" ? view.error : view ? "No messages yet." : "Connecting…"}</div>
         ) : null}
         {shown.map((u, i) =>
           u.kind === "group" ? (
@@ -238,8 +246,8 @@ export function TranscriptRender({ shape }: { shape: TranscriptShape }) {
           ),
         )}
       </div>
-      {mode === "compact" ? <div data-testid="transcript-coverage" style={{ padding: "4px 8px", fontSize: 10, color: "#666", flexShrink: 0 }}>Latest {shown.length} rows, newest first · scroll for more · Full opens the recent log</div> : null}
-      {err ? <div style={{ color: "#c00", padding: "2px 8px", fontSize: 11 }}>{err}</div> : null}
+      {mode === "compact" ? <div data-testid="transcript-coverage" style={{ padding: "4px 8px", fontSize: 10, color: "light-dark(#666, var(--bunny-muted))", flexShrink: 0 }}>Latest {shown.length} rows, newest first · scroll for more · Full opens the recent log</div> : null}
+      {err ? <div style={{ color: "light-dark(#c00, hsl(0 88% 74%))", padding: "2px 8px", fontSize: 11 }}>{err}</div> : null}
       {!view?.remote ? <PermissionCards state={controls} paseoLink={paseoLink} compact /> : null}
       <ChatComposer agentId={agentId} view={view} status={status} canPrompt={capabilities.can("prompt")} unavailable={capabilities.error} compact placeholder={`Reply to ${conversationTitle}…`} />
     </div>

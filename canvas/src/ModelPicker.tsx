@@ -48,7 +48,7 @@ export function ModelPicker({ catalogue, value, onChange, up = false }: { catalo
         aria-label={`Harness and model: ${summary}`}
         disabled={!catalogue}
         onClick={() => setOpen((o) => !o)}
-        style={{ display: "flex", alignItems: "center", gap: 8, maxWidth: "100%", padding: "6px 12px", borderRadius: 10, background: "#fff" }}
+        style={{ display: "flex", alignItems: "center", gap: 8, maxWidth: "100%", padding: "6px 12px", borderRadius: 10, background: "light-dark(#fff, var(--bunny-surface))" }}
       >
         <span style={{ width: 8, height: 8, borderRadius: 4, background: B.violet, flex: "none" }} aria-hidden />
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{summary}</span>

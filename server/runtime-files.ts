@@ -115,9 +115,16 @@ export function RuntimeFilesRemoteLive(url:string,tokenFile:string) {
 }
 let configured:Layer.Layer<RuntimeFiles>=RuntimeFilesMock();
 let remote=false;
+let legacy:Layer.Layer<RuntimeFiles>|null=null;
+let legacyRoot='';
+const legacyOwns=(input?:RuntimeFileRequest)=>!!legacy&&!!input&&(
+ ['recordings','inspect-video','transcribe'].includes(input.op)||
+ (input.op==='artifact'&&!!legacyRoot&&input.path.startsWith(legacyRoot+'/')));
 export function configureRuntimeFiles(env:NodeJS.ProcessEnv=process.env){
  remote=!!env.BUNNY_RUNTIME_FILES_URL;
  configured=remote?RuntimeFilesRemoteLive(env.BUNNY_RUNTIME_FILES_URL!,env.BUNNY_RUNTIME_FILES_TOKEN_FILE??''):RuntimeFilesMock();
+ legacy=env.BUNNY_LEGACY_RUNTIME_FILES_URL?RuntimeFilesRemoteLive(env.BUNNY_LEGACY_RUNTIME_FILES_URL,env.BUNNY_LEGACY_RUNTIME_FILES_TOKEN_FILE??''):null;
+ legacyRoot=(env.BUNNY_LEGACY_RUNTIME_FILES_ROOT??'').replace(/\/+$/,'');
 }
-export const hasRemoteRuntimeFiles=()=>remote;
-export const requestRuntimeFiles=(input:RuntimeFileRequest)=>Effect.runPromise(runtimeFileRequest(input).pipe(Effect.provide(configured)));
+export const hasRemoteRuntimeFiles=(input?:RuntimeFileRequest)=>remote||legacyOwns(input);
+export const requestRuntimeFiles=(input:RuntimeFileRequest)=>Effect.runPromise(runtimeFileRequest(input).pipe(Effect.provide(legacyOwns(input)?legacy!:configured)));

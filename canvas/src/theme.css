@@ -1,0 +1,20 @@
+/* Shell colors are shared by inline UI, stylesheets and both layouts. tldraw
+   supplies its own theme palette for document shapes, frames and canvas. */
+:root { color-scheme: light; --bunny-surface: #fff; --bunny-raised: #f1f5f9; --bunny-line: #dce1e6; --bunny-ink: #17202e; --bunny-muted: #64748b; }
+:root[data-theme="dark"] { color-scheme: dark; --bunny-surface: #20242c; --bunny-raised: #2b303b; --bunny-line: #454d5c; --bunny-ink: #edf0f7; --bunny-muted: #aab4c5; }
+html, body, #root { background: var(--bunny-surface); color: var(--bunny-ink); }
+input, textarea, select, button { color: inherit; }
+input, textarea, select { accent-color: #8875f6; }
+::placeholder { color: var(--bunny-muted); opacity: .85; }
+.bunny-theme-picker { margin: 12px 0; padding: 0; border: 0; min-width: 0; color: var(--bunny-ink); }
+.bunny-theme-picker legend { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.bunny-theme-picker small { color: var(--bunny-muted); font-size: 11px; font-weight: 400; margin-left: 5px; }
+.bunny-theme-picker > div { display: flex; gap: 4px; }
+.bunny-theme-picker button { flex: 1; display: block; width: auto; min-height: 36px; padding: 7px 8px; text-align: center; border: 1px solid var(--bunny-line); border-radius: 8px; background: var(--bunny-surface); color: var(--bunny-ink); font: inherit; font-size: 12px; cursor: pointer; }
+.bunny-theme-picker button[aria-pressed="true"] { border-color: #8875f6; background: light-dark(#efe8fe, #393253); color: light-dark(#5141a7, #d4c9ff); font-weight: 600; }
+.bunny-theme-picker button:focus-visible { outline: 2px solid #8875f6; outline-offset: 2px; }
+.bm-boards .bunny-theme-picker { padding: 6px; }
+.bm-boards .bunny-theme-picker button { display: block; width: auto; min-height: 44px; text-align: center; }
+:root[data-theme="dark"] .bm-root { --bm-cream: #20242c; --bm-ink: #edf0f7; --bm-line: rgba(185,197,216,.22); --bm-muted: #aab4c5; }
+/* Native select arrow follows the dark control text; the light brand arrow is an SVG. */
+:root[data-theme="dark"] .bunny-fp select { background-image: none; appearance: auto; -webkit-appearance: auto; padding-right: 10px; }

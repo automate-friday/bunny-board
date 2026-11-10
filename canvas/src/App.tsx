@@ -4,6 +4,7 @@ import { FrameCompression } from "./FrameCompression";
 import { Comments, CommentToolIcon } from "./comments/Comments";
 import { COMMENT_TOOL, CommentTool, installCommentAnchorKeeper, setShowPins, showPins } from "./comments/state";
 import { EmptyBoardHint } from "./EmptyBoardHint";
+import { moveFramesToPage, newPage, showMoved } from "./moveFrames";
 import { ImageTools } from "./ImageTools";
 import { installTextBoundsMeasurements } from "./measuredTextBounds";
 import { useSync } from "@tldraw/sync";
@@ -14,7 +15,34 @@ import {
   DefaultContextMenuContent,
   defaultHandleExternalUrlContent,
   DefaultToolbar,
-  DefaultToolbarContent,
+  SelectToolbarItem,
+  HandToolbarItem,
+  DrawToolbarItem,
+  EraserToolbarItem,
+  ArrowToolbarItem,
+  TextToolbarItem,
+  NoteToolbarItem,
+  AssetToolbarItem,
+  RectangleToolbarItem,
+  EllipseToolbarItem,
+  TriangleToolbarItem,
+  DiamondToolbarItem,
+  HexagonToolbarItem,
+  OvalToolbarItem,
+  RhombusToolbarItem,
+  StarToolbarItem,
+  CloudToolbarItem,
+  HeartToolbarItem,
+  XBoxToolbarItem,
+  CheckBoxToolbarItem,
+  ArrowLeftToolbarItem,
+  ArrowUpToolbarItem,
+  ArrowDownToolbarItem,
+  ArrowRightToolbarItem,
+  LineToolbarItem,
+  HighlightToolbarItem,
+  LaserToolbarItem,
+  FrameToolbarItem,
   defaultShapeUtils,
   type Editor,
   FrameShapeUtil,
@@ -23,11 +51,14 @@ import {
   type TLFrameShape,
   type TLShape,
   type TLShapeId,
+  type TLPageId,
   type TLUiContextMenuProps,
   type TLUiOverrides,
   Tldraw,
   TldrawUiMenuGroup,
   TldrawUiMenuItem,
+  TldrawUiMenuSubmenu,
+  useToasts,
   TldrawUiMenuToolItem,
   useEditor,
   useValue,
@@ -60,12 +91,19 @@ import { ArchiveCtx, ArchivePanel, type ArchiveTab, archiveFrames, ProposalBanne
 import { OrganizerPopover } from "./OrganizerPopover";
 import { ImportPicker, type ImportResponse, type PickerTarget } from "./ImportPicker";
 import { Sidebar } from "./Sidebar";
+import { NeedsYou } from "./NeedsYou";
+import { SidebarToggle } from "./SidebarToggle";
+import { readSidebar, writeSidebar } from "./sidebarMemory";
 import { BoardUiCtx } from "./ui";
 import { JumpPalette } from "./JumpPalette";
 import { Portals } from "./portals/Portals";
+import { PORTAL_TOOL, PortalTool, PortalToolIcon } from "./portals/PortalTool";
+import { installEditKeyBuffer } from "./editKeyBuffer";
+import { installFrameRenameFocus } from "./frameRename";
 import { PortalMenuItems } from "./portals/PortalMenu";
 import { MobileCtx, useMobileShell } from "./mobile/mobileMode";
 import { MobileShell } from "./mobile/MobileShell";
+import { askOpenFrame } from "./mobile/CreateSheet";
 import { ShellErrorBoundary } from "./mobile/ShellErrorBoundary";
 import { MOBILE_TLDRAW } from "./mobile/mobileMode";
 import { PhoneCanvas } from "./mobile/PhoneCanvas";
@@ -146,10 +184,12 @@ const shapeUtils = [...defaultShapeUtils.filter((u) => !["frame", "bookmark", "n
 
 // Comment mode (C) and Show comments (Shift+C), as in Figma. See canvas/src/comments.
 // Stamp tool: standard reactions on shapes that reach the frame's agent (components/stamp).
-const tools = [CommentTool, StampTool];
+const tools = [CommentTool, StampTool, PortalTool];
 const uiOverrides: TLUiOverrides = {
   tools(editor, t) {
     t[COMMENT_TOOL] = { id: COMMENT_TOOL, label: "Comment", icon: <CommentToolIcon />, kbd: "c", readonlyOk: true, onSelect: () => editor.setCurrentTool(COMMENT_TOOL) };
+    // Make a portal from the selected sticky to a shape or an area (portals/PortalTool.tsx).
+    t[PORTAL_TOOL] = { id: PORTAL_TOOL, label: "Portal", icon: <PortalToolIcon />, onSelect: () => editor.setCurrentTool(PORTAL_TOOL) };
     return t;
   },
   actions(_editor, a) {
@@ -164,7 +204,37 @@ function BoardToolbar() {
       <TldrawUiMenuToolItem toolId={COMMENT_TOOL} />
       <StampToolButton />
       <WidgetTrayButton />
-      <DefaultToolbarContent />
+      {/* tldraw's tools, with Portal next to Arrow (the toolbar shows nine items on a
+          desktop width; the rest, Text and Sticky included, are under its ^ menu). */}
+      <SelectToolbarItem />
+      <HandToolbarItem />
+      <DrawToolbarItem />
+      <EraserToolbarItem />
+      <ArrowToolbarItem />
+      <TldrawUiMenuToolItem toolId={PORTAL_TOOL} />
+      <TextToolbarItem />
+      <NoteToolbarItem />
+      <AssetToolbarItem />
+      <RectangleToolbarItem />
+      <EllipseToolbarItem />
+      <TriangleToolbarItem />
+      <DiamondToolbarItem />
+      <HexagonToolbarItem />
+      <OvalToolbarItem />
+      <RhombusToolbarItem />
+      <StarToolbarItem />
+      <CloudToolbarItem />
+      <HeartToolbarItem />
+      <XBoxToolbarItem />
+      <CheckBoxToolbarItem />
+      <ArrowLeftToolbarItem />
+      <ArrowUpToolbarItem />
+      <ArrowDownToolbarItem />
+      <ArrowRightToolbarItem />
+      <LineToolbarItem />
+      <HighlightToolbarItem />
+      <LaserToolbarItem />
+      <FrameToolbarItem />
     </DefaultToolbar>
   );
 }
@@ -181,6 +251,13 @@ export function stuckInteraction(editor: Editor): boolean {
   return PINCH_CANCELS.some((p) => path === p || path.startsWith(`${p}.`));
 }
 
+const browserStorage = (): Storage | undefined => {
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+};
 const SidebarCtx = createContext<{ open(frameId: string): void }>({ open() {} });
 
 // Mounted when the context menu opens (right click, or a long press on touch, where no
@@ -206,6 +283,35 @@ function ArchiveFrameItem() {
   return <TldrawUiMenuItem id="paseo-archive-frames" label={frames.length === 1 ? `Archive frame${name ? ` “${name.length > 28 ? `${name.slice(0, 27)}…` : name}”` : ""}` : `Archive ${frames.length} frames`} onSelect={() => archive.archive(frames)} />;
 }
 
+// "Move to page": the same frame(s) Archive acts on, to another page or a new one. Stays on
+// this page (a toast offers the jump), so a page can be sorted out frame after frame.
+function MoveFramesToPageItem() {
+  const editor = useEditor();
+  const { addToast } = useToasts();
+  const [frames] = useState(() => archiveTargets(editor, editor.inputs.getCurrentPagePoint()));
+  if (!frames.length) return null;
+  const here = editor.getAncestorPageId(frames[0]);
+  const pages = editor.getPages().filter((p) => p.id !== here);
+  const move = (pageId: TLPageId) => {
+    const r = moveFramesToPage(editor, frames, pageId);
+    const name = editor.getPage(pageId)?.name ?? "the page";
+    if (!r.ok) addToast({ title: r.reason, severity: "warning" });
+    else addToast({ title: `Moved ${r.moved.length === 1 ? "frame" : `${r.moved.length} frames`} to “${name}”`, actions: [{ label: "Go there", type: "primary", onClick: () => showMoved(editor, pageId, r.moved) }] });
+  };
+  return (
+    <TldrawUiMenuSubmenu id="bunny-move-to-page" label={frames.length === 1 ? "Move frame to page" : `Move ${frames.length} frames to page`}>
+      <TldrawUiMenuGroup id="bunny-move-to-page-pages">
+        {pages.map((p) => (
+          <TldrawUiMenuItem key={p.id} id={`bunny-move-to-${p.id}`} label={p.name} onSelect={() => move(p.id)} />
+        ))}
+      </TldrawUiMenuGroup>
+      <TldrawUiMenuGroup id="bunny-move-to-page-new">
+        <TldrawUiMenuItem id="bunny-move-to-new-page" label="New page" onSelect={() => move(newPage(editor))} />
+      </TldrawUiMenuGroup>
+    </TldrawUiMenuSubmenu>
+  );
+}
+
 function BoardContextMenu(props: TLUiContextMenuProps) {
   const ui = useContext(BoardUiCtx);
   return (
@@ -213,6 +319,7 @@ function BoardContextMenu(props: TLUiContextMenuProps) {
       <TldrawUiMenuGroup id="bunny">
         <CapturePoint />
         <PortalMenuItems />
+        <MoveFramesToPageItem />
         <ArchiveFrameItem />
         <TldrawUiMenuItem id="paseo-import-here" label="Import conversations here" onSelect={() => ui.openPicker({ kind: "grid", at: ui.contextPoint() })} />
       </TldrawUiMenuGroup>
@@ -386,13 +493,15 @@ export function App() {
           ? `${target.kind === "frame" ? "Linked" : `Imported ${made} conversation${made === 1 ? "" : "s"}`}${skipped.length ? ` · skipped ${skipped.length}: ${[...new Set(skipped)].join(", ")}` : ""}`
           : `Nothing imported: ${[...new Set(skipped)].join(", ") || "no conversations"}`,
       );
-      if (made) focusFrames(res.created.map((c) => c.frameId), made === 1);
+      // The phone shell opens the (first) imported frame itself, on its page.
+      if (made && mobile) askOpenFrame(res.created[0].frameId);
+      else if (made) focusFrames(res.created.map((c) => c.frameId), made === 1);
       else {
         const here = res.skipped.find((s) => s.boardId === boardId && s.frameId);
         if (here?.frameId) focusFrames([here.frameId], true);
       }
     },
-    [boardId, focusFrames],
+    [boardId, focusFrames, mobile],
   );
   // Sidebar drag handles and image files drop board components here (see components/registry.ts).
   const options = useMemo(
@@ -405,7 +514,18 @@ export function App() {
     }),
     [],
   );
-  const [sidebarFrame, setSidebarFrame] = useState<string | null>(frameId);
+  // Desktop: the sidebar comes back after a reload as it was left (open or collapsed, and on
+  // which conversation); SidebarToggle reopens the last conversation with one click.
+  const [remembered] = useState(() => readSidebar(browserStorage(), boardId));
+  const [sidebarFrame, setSidebarFrame] = useState<string | null>(frameId ?? (!mobile && remembered.open ? remembered.frame : null));
+  const [reading, setReading] = useState(remembered.reading === true);
+  const [lastSidebarFrame, setLastSidebarFrame] = useState<string | null>(frameId ?? remembered.frame);
+  useEffect(() => {
+    if (sidebarFrame) setLastSidebarFrame(sidebarFrame);
+  }, [sidebarFrame]);
+  useEffect(() => {
+    if (!mobile) writeSidebar(browserStorage(), boardId, { frame: sidebarFrame ?? lastSidebarFrame, open: !!sidebarFrame, reading });
+  }, [boardId, mobile, sidebarFrame, lastSidebarFrame, reading]);
   // The frame whose History slider is open (FrameHistory.tsx); one at a time.
   const [historyFrame, setHistoryFrame] = useState<string | null>(null);
   // Tab title: the frame whose conversation is selected or open, then the board.
@@ -538,14 +658,24 @@ export function App() {
         if (!measurementDisposed && info.capabilities?.textBoundsMeasurementsSafe === true && !phoneGeometryOn()) stopMeasurements = installTextBoundsMeasurements(editor);
       }).catch(() => undefined);
       const stopGuard = installLayoutGuard(editor, (what) => setToastText(what));
+      // Keys typed right after a double-click, before the sticky's text box has focus, are
+      // replayed instead of dropped (canvas/src/editKeyBuffer.ts).
+      const stopEditKeys = installEditKeyBuffer(editor);
+      // A double-clicked frame title keeps its name input focused (canvas/src/frameRename.ts).
+      const stopFrameRename = installFrameRenameFocus(editor);
       const stopDelete = editor.sideEffects.registerAfterDeleteHandler("shape", (shape, source) => {
         // biome-ignore lint/suspicious/noExplicitAny: meta JSON.
         const p = (shape.meta as any)?.paseo;
         if (source !== "user" || shape.type !== "frame" || !p?.agentId) return;
         const agentId = String(p.agentId);
-        const title = agentStore.get(agentId)?.title || (shape as TLFrameShape).props.name || agentId.slice(0, 8);
-        setReleased((list) => (list.some((a) => a.agentId === agentId) ? list : [...list, { agentId, title, frameName: (shape as TLFrameShape).props.name }]));
-        setSidebarFrame((cur) => (cur === shape.id ? null : cur));
+        // "Move to page" (moveFrames.ts, tldraw's own Move to) deletes the frame and puts it
+        // back with the same id on the other page in one go: that frame was moved, not deleted.
+        setTimeout(() => {
+          if (editor.getShape(shape.id)) return;
+          const title = agentStore.get(agentId)?.title || (shape as TLFrameShape).props.name || agentId.slice(0, 8);
+          setReleased((list) => (list.some((a) => a.agentId === agentId) ? list : [...list, { agentId, title, frameName: (shape as TLFrameShape).props.name }]));
+          setSidebarFrame((cur) => (cur === shape.id ? null : cur));
+        }, 0);
       });
       return () => {
         measurementDisposed = true;
@@ -555,6 +685,8 @@ export function App() {
         stopSyncRate();
         stopPinchFix();
         stopGuard();
+        stopEditKeys();
+        stopFrameRename();
       };
     },
     [boardId, userId, userName],
@@ -570,8 +702,9 @@ export function App() {
   return (
     <div style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column" }}>
       <HostRecoveryBanner boardId={boardId} editor={editor} />
-      {editor ? <JumpPalette editor={editor} boardId={boardId} userId={userId} /> : null}
+      {editor ? <JumpPalette editor={editor} boardId={boardId} userId={userId} onFindConversations={() => setPicker({ kind: "grid", at: null })} /> : null}
       <div style={{ flex: 1, minHeight: 0, display: "flex", position: "relative" }}>
+      {editor && !mobile && !phone ? <NeedsYou key={boardId} editor={editor} boardId={boardId} open={setSidebarFrame} onReturn={() => setSidebarFrame(null)} /> : null}
       <SidebarCtx.Provider value={sidebarApi}>
         <BoardUiCtx.Provider value={boardUi}>
         <HistoryCtx.Provider value={historyApi}>
@@ -589,10 +722,11 @@ export function App() {
             <Tldraw licenseKey={TLDRAW_LICENSE_KEY} store={store} shapeUtils={shapeUtils} tools={tools} overrides={uiOverrides} onMount={onMount} components={components} options={options} {...(mobile ? MOBILE_TLDRAW : {})} />
             {/* Inside the canvas column, so the bunny sits in the canvas corner, clear of the sidebar. */}
             {editor ? <OrganizerPopover editor={editor} boardId={boardId} /> : null}
+            {editor && !mobile ? <SidebarToggle editor={editor} open={!!sidebarFrame} last={lastSidebarFrame} onCollapse={() => setSidebarFrame(null)} onRestore={(id) => setSidebarFrame(id)} /> : null}
             {shellEditor && mobile ? (
               // A shell error shows "Reload view" (and is reported) instead of blanking the page.
               <ShellErrorBoundary onReset={() => setSidebarFrame(null)}>
-                <MobileShell editor={shellEditor} boardId={boardId} userId={userId} initialFrame={frameId} threadOpen={!!sidebarFrame} openThread={(id) => setSidebarFrame(id)} closeThread={() => setSidebarFrame(null)} />
+                <MobileShell editor={shellEditor} boardId={boardId} userId={userId} initialFrame={frameId} threadOpen={!!sidebarFrame} openThread={(id) => setSidebarFrame(id)} closeThread={() => setSidebarFrame(null)} importConversations={() => setPicker({ kind: "grid", at: null })} />
               </ShellErrorBoundary>
             ) : null}
           </div>
@@ -610,7 +744,7 @@ export function App() {
       ) : released.length ? (
         <ReleasedPrompt agents={released} onDone={(id) => setReleased((list) => list.filter((a) => a.agentId !== id))} />
       ) : editor && sidebarFrame ? (
-        <Sidebar key={sidebarFrame} editor={editor} frameId={sidebarFrame} boardId={boardId} sheet={phone || mobile} mobile={mobile} onClose={() => setSidebarFrame(null)} onArchive={(id) => archiveApi.archive([id])} />
+        <Sidebar key={sidebarFrame} editor={editor} frameId={sidebarFrame} boardId={boardId} sheet={phone || mobile} mobile={mobile} reading={reading} onReadingChange={setReading} onClose={() => setSidebarFrame(null)} onArchive={(id) => archiveApi.archive([id])} />
       ) : null}
       {picker ? (
         <ImportPicker
@@ -651,7 +785,7 @@ export function App() {
                 setToast(null);
                 run();
               }}
-              style={{ marginLeft: 12, background: "none", border: "none", color: "#74c0fc", font: "600 13px system-ui, sans-serif", cursor: "pointer", padding: 0 }}
+              style={{ marginLeft: 12, background: "none", border: "none", color: "light-dark(#74c0fc, hsl(206 88% 74%))", font: "600 13px system-ui, sans-serif", cursor: "pointer", padding: 0 }}
             >
               {toast.action.label}
             </button>

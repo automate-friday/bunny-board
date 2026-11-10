@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { useEditor, useValue } from "tldraw";
 import { DEV_PLUGIN_NOTE, isDevPlugin } from "../../../../shared/plugins";
-import { type AnyConfig, isConfigured, type WidgetState, type WidgetStatus, widgetConfig, widgetKey, widgetManifest } from "../../../../shared/widgets";
+import { type AnyConfig, isConfigured, type WidgetState, type WidgetStatus, widgetConfig, widgetKey, widgetLink, widgetManifest } from "../../../../shared/widgets";
 import { widgetBodies } from "../../widgets/registry";
 import { useWidgetState } from "../../widgets/store";
 import { WidgetConfigForm } from "./ConfigForm";
@@ -49,7 +49,7 @@ export function StatusDot({ state }: { state: WidgetState | null }) {
   return (
     <span data-testid="widget-status" data-status={status} title={title} style={{ display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0, minWidth: 0, maxWidth: "55%" }}>
       <span style={{ width: 10, height: 10, borderRadius: 5, flexShrink: 0, background: WIDGET_STATUS_COLOR[status], boxShadow: `0 0 0 2px ${WIDGET_STATUS_COLOR[status]}33`, animation: status === "connecting" ? "bunny-widget-pulse 1.2s ease-in-out infinite" : undefined }} />
-      <span data-testid="widget-status-text" style={{ fontSize: 11, color: status === "error" ? "#b3261e" : status === "stale" ? "#8a6400" : "#667", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+      <span data-testid="widget-status-text" style={{ fontSize: 11, color: status === "error" ? "light-dark(#b3261e, hsl(3 71% 74%))" : status === "stale" ? "light-dark(#8a6400, hsl(43 88% 74%))" : "light-dark(#667, var(--bunny-muted))", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {status === "error" || status === "stale" ? (state?.reason ?? STATUS_TEXT[status]) : status === "live" ? ago(state?.syncedAt ?? null, now) : "connecting…"}
       </span>
     </span>
@@ -99,26 +99,36 @@ export function WidgetRender({ shape }: { shape: WidgetShape }) {
         if ((e.target as HTMLElement).closest("input,button,select,textarea,a,[data-scroll]")) e.stopPropagation();
       }}
       onKeyDown={stop}
-      style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", boxSizing: "border-box", background: "#fff", border: `1.5px solid ${state ? `${WIDGET_STATUS_COLOR[state.status]}aa` : "#c9ced6"}`, borderRadius: 12, boxShadow: "0 3px 14px rgba(20,30,60,.10)", overflow: "hidden", pointerEvents: "all", font: "12px system-ui, sans-serif", color: "#223" }}
+      style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", boxSizing: "border-box", background: "light-dark(#fff, var(--bunny-surface))", border: `1.5px solid ${state ? `${WIDGET_STATUS_COLOR[state.status]}aa` : "light-dark(#c9ced6, var(--bunny-line))"}`, borderRadius: 12, boxShadow: "0 3px 14px rgba(20,30,60,.10)", overflow: "hidden", pointerEvents: "all", font: "12px system-ui, sans-serif", color: "light-dark(#223, var(--bunny-ink))" }}
     >
-      <header style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderBottom: "1px solid #eef0f3", background: "#f8f9fb", minHeight: 20 }}>
-        <span style={{ color: "#3b4252", display: "inline-flex" }}>
+      <header style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderBottom: "1px solid light-dark(#eef0f3, var(--bunny-line))", background: "light-dark(#f8f9fb, var(--bunny-surface))", minHeight: 20 }}>
+        <span style={{ color: "light-dark(#3b4252, var(--bunny-muted))", display: "inline-flex" }}>
           <WidgetIcon name={m?.icon ?? "widgets"} size={16} />
         </span>
         <span style={{ fontWeight: 650, fontSize: 13, whiteSpace: "nowrap" }}>{m?.label ?? widgetId}</span>
         {/* Hidden from the store, tray and agents (shared/plugins.ts); existing ones still run. */}
         {isDevPlugin(widgetId) ? (
-          <span data-testid="widget-dev-note" title={DEV_PLUGIN_NOTE} style={{ flexShrink: 0, fontSize: 10, fontWeight: 600, color: "#7a5b00", background: "#fff4cc", border: "1px solid #f0dc94", borderRadius: 6, padding: "1px 5px", whiteSpace: "nowrap" }}>
+          <span data-testid="widget-dev-note" title={DEV_PLUGIN_NOTE} style={{ flexShrink: 0, fontSize: 10, fontWeight: 600, color: "light-dark(#7a5b00, hsl(45 88% 74%))", background: "light-dark(#fff4cc, hsl(47 45% 21%))", border: "1px solid light-dark(#f0dc94, hsl(47 35% 39%))", borderRadius: 6, padding: "1px 5px", whiteSpace: "nowrap" }}>
             developer plugin
           </span>
         ) : null}
-        <span data-testid="widget-summary" style={{ color: "#667", flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <span data-testid="widget-summary" style={{ color: "light-dark(#667, var(--bunny-muted))", flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {m && configured ? m.summary(config, state) : ""}
         </span>
+        {/* The widget's link out (manifest headerLink), e.g. "Open in Postiz": a new tab, never in place. */}
+        {(() => {
+          const link = m && configured ? widgetLink({ widgetId, config }, state) : null;
+          return link ? (
+            <a data-testid="widget-link" href={link.href} target="_blank" rel="noopener noreferrer" title={link.title ?? link.label} style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 3, color: "light-dark(#1d5fbf, hsl(216 74% 74%))", fontWeight: 600, fontSize: 11, textDecoration: "none", whiteSpace: "nowrap" }}>
+              {link.label}
+              <WidgetIcon name="external" size={13} />
+            </a>
+          ) : null;
+        })()}
         {/* An invalid config is an error too: red dot with the reason, over the form to fix it. */}
         {configured || configError ? <StatusDot state={state} /> : null}
         {m && configured && !readOnly ? (
-          <button type="button" data-testid="widget-configure" title="Configure" aria-label="Configure" onClick={() => setEditing((v) => !v)} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, color: "#556", display: "inline-flex" }}>
+          <button type="button" data-testid="widget-configure" title="Configure" aria-label="Configure" onClick={() => setEditing((v) => !v)} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, color: "light-dark(#556, var(--bunny-muted))", display: "inline-flex" }}>
             <WidgetIcon name="settings" size={16} />
           </button>
         ) : null}

@@ -97,6 +97,22 @@ export interface WidgetManifest<C extends AnyConfig = AnyConfig, D = unknown> ex
   statusDetail?(config: C, state: WidgetState<D> | null): string;
   // One-line data summary for board_read and board_widget read.
   describe(config: C, state: WidgetState<D> | null): string;
+  // Optional: a link out to the service behind the widget (e.g. "Open in Postiz"). The
+  // generic header shows it as a new-tab link (http(s) only), and board_widget returns it
+  // as `link` so agents can hand it on. Null when there is nothing to link to.
+  headerLink?(config: C, state: WidgetState<D> | null): { href: string; label: string; title?: string } | null;
+}
+
+// A header link's href, if it is a plain http(s) URL without credentials; else null.
+export function safeHttpUrl(href: unknown): string | null {
+  if (typeof href !== "string" || href.length > 2000) return null;
+  try {
+    const u = new URL(href);
+    if ((u.protocol !== "http:" && u.protocol !== "https:") || u.username || u.password) return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
 }
 
 export const WIDGET_STATUSES: WidgetStatus[] = ["connecting", "live", "stale", "error"];

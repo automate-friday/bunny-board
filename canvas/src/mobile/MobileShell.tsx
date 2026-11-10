@@ -1,3 +1,5 @@
+import { AppIcon } from "../components/AppIcon";
+import { ThemePicker } from "../theme";
 // Phone shell: a mobile-first way into the board, organised as tiles of mini whiteboards.
 // Three modes (the R4-5 iPhone set and R3-1 iPhone switcher mockups):
 // - tiles (the entry screen): "<board> ▾" switcher and the orange "N need you →" pill, a
@@ -16,7 +18,7 @@
 import { CloudMark } from "../Dot";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useKilledPageReport } from "./ShellErrorBoundary";
-import { type Box, createShapeId, type Editor, type TLCameraOptions, type TLPageId, type TLShapeId, useValue } from "tldraw";
+import { type Box, createShapeId, type Editor, PageRecordType, type TLCameraOptions, type TLPageId, type TLShapeId, useValue } from "tldraw";
 import { goToBoard } from "../BoardMenu";
 import { indexFrames, lastInteracted, readAgentSends, readRecents, recencyKey, rememberFrame, timeAgo, type PaletteFrame } from "../jumpPaletteModel";
 import { addPin, removePin, usePins } from "../framePanelDock";
@@ -27,6 +29,7 @@ import { LiveThumb } from "./LiveThumb";
 import { AddButton, HistoryButtons, MobileEdit } from "./AddSheet";
 import { useReadingZoom } from "./readingZoom";
 import { Immersive, immersiveNow } from "./Immersive";
+import { pickUp, useHeld } from "./editGestures";
 import { useVerticalDrag } from "./sheetDrag";
 import { setPhoneView } from "./visibility";
 import { SendWatcher, useLastSend } from "../ChatComposer";
@@ -37,6 +40,7 @@ import { emptyHistory, forget, goTo, stepTarget, visit } from "./jumpHistory";
 import { JumpPills } from "./JumpPills";
 import { RenameSheet } from "./RenameSheet";
 import { fitAround, fitBoard, FocusLabel, FocusOutline, FullBoardButton } from "./BoardFocus";
+import { attachBoardSurface } from "./boardGestures";
 import { StopButton, useStopped } from "./StopButton";
 import { useModalOpen } from "./modalHold";
 import { askStartBeside, askStartSheet, emptyFrame, StartSheet, type StartPrefill, useAskedStartBeside, useAskedStartSheet } from "./StartSheet";
@@ -46,7 +50,9 @@ import { deviceLock } from "../locks";
 import { askReveal, Reveal, useAskedReveal, whereOnBoard } from "./Reveal";
 import { TellBunny, TellBunnyButton } from "./TellBunny";
 import { pageTiles, PageMenu, usePages } from "./pages";
+import { askOpenFrame, CreateSheet, type CreateKind, NewMenu, useAskedOpenFrame } from "./CreateSheet";
 import "./mobile.css";
+import { type AgentSummary, type LastUserMessage, useAgentSummary } from "../lastSent";
 
 // `preview`: a frame copied by board-env --state copy keeps only a display copy of its binding
 // (meta.paseoPreview, no agent id): shown as "preview · not connected", never driven.
@@ -133,26 +139,25 @@ function useActivity(boardId: string, tick: unknown): Map<string, number> {
 }
 
 
-// Harness per agent ("Claude"), asked once per page.
-const harnesses = new Map<string, Promise<string>>();
+// Harness per agent ("Claude") and the last message the person sent it, from the agent
+// summary (lastSent.ts: one request per agent, shared and kept fresh while shown).
 const harnessKnown = new Map<string, string>();
 function useHarness(agentId: string): string {
-  const [label, setLabel] = useState("");
-  useEffect(() => {
-    if (!agentId) return;
-    let live = true;
-    let p = harnesses.get(agentId);
-    if (!p) {
-      p = api<{ provider?: string; model?: string }>(`/api/ui/agents/${encodeURIComponent(agentId)}`).then((a) => harnessLabel(a.provider ?? a.model ?? "")).catch(() => "");
-      void p.then((h) => h && harnessKnown.set(agentId, h));
-      harnesses.set(agentId, p);
-    }
-    void p.then((m) => live && setLabel(m));
-    return () => {
-      live = false;
-    };
-  }, [agentId]);
-  return label;
+  return harnessOf(agentId, useAgentSummary(agentId, !!agentId));
+}
+function harnessOf(agentId: string, s: AgentSummary | null): string {
+  const h = s ? harnessLabel(s.provider ?? s.model ?? "") : "";
+  if (h) harnessKnown.set(agentId, h);
+  return h;
+}
+// "You: …" under a frame's name: small and grey; nothing when the person sent nothing.
+function YouLine({ last, testid = "mobile-you" }: { last: LastUserMessage | null | undefined; testid?: string }) {
+  if (!last?.text) return null;
+  return (
+    <small className="bm-you" data-testid={testid} title={last.text}>
+      You: {last.text}
+    </small>
+  );
 }
 
 const dot = (raw: string) => STATUS_DOT[raw === "requested" ? "starting" : raw] ?? "#d6cfc6";
@@ -232,7 +237,10 @@ function hswipe(go: (dir: 1 | -1) => void, onTap?: () => void) {
 // Frame mode: hold the camera to the frame (fit, then pinch and pan inside it). The frame's
 // bounds are watched, so a frame its agent grows keeps fitting. The board's own camera
 // options come back on leaving.
+// While the open frame itself is picked up (moved or resized whole), the camera stands still and
+// is free, so the frame follows the finger; it fits the frame again once it is put down.
 function useFrameCamera(editor: Editor, frameId: string | null, threadOpen = false) {
+  const held = useHeld() === frameId && !!frameId;
   const bounds = useValue("mobile-frame-bounds", () => (frameId ? editor.getShapePageBounds(frameId as TLShapeId) : null), [editor, frameId]);
   const key = bounds ? `${bounds.x}:${bounds.y}:${bounds.w}:${bounds.h}` : "";
   const saved = useRef<TLCameraOptions | null>(null);
@@ -242,10 +250,18 @@ function useFrameCamera(editor: Editor, frameId: string | null, threadOpen = fal
     const page = editor.getAncestorPageId(frameId as TLShapeId);
     if (page && page !== editor.getCurrentPageId()) editor.setCurrentPage(page);
     if (!saved.current) saved.current = editor.getCameraOptions();
+    if (held) {
+      editor.setCameraOptions(unlocked(saved.current));
+      return;
+    }
     // Fit between the top bar and the bottom dock, with a small margin (the frame's label
     // sits just above it).
     const vp = editor.getViewportScreenBounds();
-    const top = Math.max(document.querySelector(".bm-top")?.getBoundingClientRect().bottom ?? 56, document.querySelector(".bm-switch")?.getBoundingClientRect().bottom ?? 0) + 34;
+    // Read again on each placement below: the frame switch strip under the top bar can come
+    // in a moment after the frame opens, and must not cover the frame's title tab (a hold on
+    // it picks the frame up).
+    const topNow = () => Math.max(document.querySelector(".bm-top")?.getBoundingClientRect().bottom ?? 56, document.querySelector(".bm-switch")?.getBoundingClientRect().bottom ?? 0) + 34;
+    const top = topNow();
     // Above whatever covers the bottom: the open thread sheet, else the dock.
     const sheet = threadOpen ? document.querySelector('[data-testid="sidebar"][data-sheet="1"]')?.getBoundingClientRect() : null;
     const dock = document.querySelector(".bm-dock")?.getBoundingClientRect();
@@ -261,14 +277,16 @@ function useFrameCamera(editor: Editor, frameId: string | null, threadOpen = fal
         const b = editor.getShapePageBounds(frameId as TLShapeId);
         const r = document.querySelector('[data-testid="sidebar"][data-sheet="1"]')?.getBoundingClientRect();
         const v = editor.getViewportScreenBounds();
-        if (b) editor.setCamera(fitInBand({ w: v.w, h: v.h }, b, { top: top - v.y, bottom: r ? Math.max(0, v.y + v.h - r.top) : bottom }), { immediate: true });
+        if (b) editor.setCamera(fitInBand({ w: v.w, h: v.h }, b, { top: topNow() - v.y, bottom: r ? Math.max(0, v.y + v.h - r.top) : bottom }), { immediate: true });
       };
       place();
       const t1 = requestAnimationFrame(place);
       const t2 = setTimeout(place, 150);
+      const t3 = setTimeout(place, 450);
       return () => {
         cancelAnimationFrame(t1);
         clearTimeout(t2);
+        clearTimeout(t3);
       };
     }
     editor.setCameraOptions({
@@ -277,7 +295,7 @@ function useFrameCamera(editor: Editor, frameId: string | null, threadOpen = fal
     });
     editor.zoomToBounds(bounds as Box, { inset: 0, immediate: true });
     editor.resetZoom(editor.getViewportScreenCenter(), { immediate: true });
-  }, [editor, frameId, key, threadOpen]);
+  }, [editor, frameId, held ? "" : key, threadOpen, held]);
   useEffect(
     () => () => {
       if (saved.current) {
@@ -289,7 +307,8 @@ function useFrameCamera(editor: Editor, frameId: string | null, threadOpen = fal
   );
 }
 
-export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen, openThread, closeThread }: { editor: Editor; boardId: string; userId: string; initialFrame: string | null; threadOpen: boolean; openThread: (frameId: string) => void; closeThread: () => void }) {
+// `importConversations`: open the shared Import picker (App.tsx) for Paseo conversations started elsewhere.
+export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen, openThread, closeThread, importConversations }: { editor: Editor; boardId: string; userId: string; initialFrame: string | null; threadOpen: boolean; openThread: (frameId: string) => void; closeThread: () => void; importConversations?: () => void }) {
   const frames = useFrames(editor);
   // Test hook (bench/phone.ts --soak): a forced render error, to check ShellErrorBoundary. It
   // keeps throwing (React retries a failed render once) until the boundary catches it and clears it.
@@ -428,6 +447,42 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
     if ((thread ?? true) && f.agentId) openThread(id);
     else closeThread();
   };
+  // "+ New" (CreateSheet.tsx): the menu, and the name sheet for a new frame or page.
+  const [newMenu, setNewMenu] = useState(false);
+  const [creating, setCreating] = useState<CreateKind | null>(null);
+  // A frame made here or imported reaches `frames` a render later: open it when it does.
+  const wantOpen = useAskedOpenFrame();
+  useEffect(() => {
+    if (!wantOpen || !frames.some((f) => f.id === wantOpen)) return;
+    askOpenFrame(null);
+    openFrame(wantOpen);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: opens once when the frame arrives.
+  }, [wantOpen, frames]);
+  // A new empty frame on the page the tiles show (else the editor's page), right of everything.
+  // Named, not a "New agent" draft, so it stays until you put something in it.
+  const createFrame = (name: string) => {
+    setCreating(null);
+    const page = (tilePage ?? editor.getCurrentPageId()) as TLPageId;
+    if (page !== editor.getCurrentPageId()) editor.setCurrentPage(page);
+    const boxes = frames.filter((f) => f.pageId === page).flatMap((f) => editor.getShapePageBounds(f.id as TLShapeId) ?? []);
+    const at = newFrameSpot(boxes);
+    const id = createShapeId();
+    editor.createShape({ id, type: "frame", parentId: page, x: at.x, y: at.y, props: { w: 960, h: 640, name } });
+    askOpenFrame(id);
+  };
+  // A new page (a separate space, as on desktop): switched to, its (empty) tiles shown.
+  const createPage = (name: string) => {
+    setCreating(null);
+    const id = PageRecordType.createId();
+    editor.createPage({ id, name });
+    editor.setCurrentPage(id);
+    setTilePage(id);
+    toTiles();
+  };
+  const pickNew = (what: CreateKind | "import") => {
+    if (what === "import") importConversations?.();
+    else setCreating(what);
+  };
   const toTiles = () => {
     closeThread();
     setSearch(false);
@@ -461,13 +516,28 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
     setMode("board");
     requestAnimationFrame(() => requestAnimationFrame(() => fitAround(editor, id)));
   };
+  // Frame sheet → Move on board: that view, with the frame already picked up (a hold does the
+  // same; this is the visible way to it). Drag it, then Done.
+  const moveOnBoard = (id: string) => {
+    showOnBoard(id);
+    requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => pickUp(editor, id as TLShapeId))));
+  };
   useEffect(() => {
     if (mode !== "board") setBoardFocus(null);
   }, [mode]);
 
-  // Board mode: a tap on the canvas (not a pan, not a pinch) with the hand tool opens the frame under it.
+  // Board mode: a drag or pinch that starts off the canvas (the dock around its buttons, the
+  // frame label, below the page) moves the camera too (boardGestures.ts).
+  useEffect(() => (mode === "board" && !reveal ? attachBoardSurface(editor) : undefined), [editor, mode, reveal]);
+
+  // Keep an in-flight tap across renders (agent updates can arrive between down and up).
+  const frameTap = useRef({ frames, openFrame });
+  frameTap.current = { frames, openFrame };
+
+  // A hand-tool tap opens the frame conversation, including when its transcript was deleted.
+  // In frame mode an already-open thread keeps the collapse gesture below.
   useEffect(() => {
-    if (mode !== "board") return;
+    if (mode !== "board" && (mode !== "frame" || threadOpen)) return;
     const el = editor.getContainer();
     let down: { x: number; y: number; t: number; id: number } | null = null;
     let fingers = 0;
@@ -482,13 +552,16 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
       if (!d || d.id !== e.pointerId || editor.getCurrentToolId() !== "hand" || immersiveNow()) return;
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 8 || Date.now() - d.t > 400) return;
       const p = editor.screenToPage({ x: e.clientX, y: e.clientY });
-      const boxes = frames.flatMap((f) => {
+      const boxes = frameTap.current.frames.flatMap((f) => {
         if (f.pageId !== editor.getCurrentPageId()) return [];
         const b = editor.getShapePageBounds(f.id as TLShapeId);
         return b ? [{ id: f.id, bound: !!f.agentId, x: b.x, y: b.y, w: b.w, h: b.h }] : [];
       });
       const hit = frameAtTap(boxes, p);
-      if (hit) openFrame(hit.id);
+      if (hit) frameTap.current.openFrame(hit.id);
+    };
+    const onMove = (e: PointerEvent) => {
+      if (down?.id === e.pointerId && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8) down = null;
     };
     const onCancel = () => {
       fingers = Math.max(0, fingers - 1);
@@ -497,12 +570,14 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
     el.addEventListener("pointerdown", onDown, true);
     el.addEventListener("pointerup", onUp, true);
     el.addEventListener("pointercancel", onCancel, true);
+    el.addEventListener("pointermove", onMove, true);
     return () => {
       el.removeEventListener("pointerdown", onDown, true);
       el.removeEventListener("pointerup", onUp, true);
       el.removeEventListener("pointercancel", onCancel, true);
+      el.removeEventListener("pointermove", onMove, true);
     };
-  });
+  }, [editor, mode, threadOpen]);
 
   const current = frames.find((f) => f.id === frameId) ?? null;
   const exists = (id: string) => frames.some((f) => f.id === id);
@@ -590,7 +665,8 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
         if (gone.length) {
           const was = deviceLock.get();
           deviceLock.set(false);
-          try { editor.deleteShapes(gone as TLShapeId[]); } finally { deviceLock.set(was); }
+          // Housekeeping, not an edit of yours: outside the undo history (it still syncs).
+          try { editor.run(() => editor.deleteShapes(gone as TLShapeId[]), { history: "ignore" }); } finally { deviceLock.set(was); }
         }
         if (gone.some((id) => editor.getShape(id as TLShapeId)) && tries > 1) sweep(tries - 1);
       }, tries === 4 ? 1500 : 2000);
@@ -739,7 +815,7 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
       {mode === "frame" && current ? (
         <div className="bm-top" data-mobile-ui data-testid="mobile-top">
           <button type="button" className="bm-back" data-testid="mobile-back" onClick={toTiles} aria-label="Back to frames">
-            ‹
+            <AppIcon name="chevron-left" size={22} />
           </button>
           <span className="bm-frame-title" data-testid="mobile-frame-title" role="button" tabIndex={0} aria-label={`${current.name}: tap to rename`} onKeyDown={(e) => { if (e.key === "Enter") setRenaming(current.id); }} {...hswipe((dir) => { const id = neighbour(order, frameId, dir); if (id && id !== frameId) openFrame(id); }, () => setRenaming(current.id))}>
             <StatusDot status={current.rawStatus} />
@@ -748,7 +824,9 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
           <FullBoardButton onClick={fullBoard} />
           {/* Portrait: a row under the bar; landscape: in the bar itself, in the title's place
               (the open frame's chip is highlighted), so the frame keeps the screen's height. */}
-          <QuickSwitch frames={frames} order={order} current={current.id} jumps={stepTarget(hist, -1, exists) || stepTarget(hist, 1, exists) ? <JumpPills history={hist} names={(id) => frames.find((f) => f.id === id)?.name ?? "frame"} exists={exists} go={(at) => openFrame(hist.stack[at], undefined, at)} /> : null} openFrame={openFrame} rename={() => setRenaming(current.id)} />
+          {/* With the thread up the chips and jump pills give their row to the conversation
+              (collapse the thread, or swipe the title, to switch frames). */}
+          {threadOpen ? null : <QuickSwitch frames={frames} order={order} current={current.id} jumps={stepTarget(hist, -1, exists) || stepTarget(hist, 1, exists) ? <JumpPills history={hist} names={(id) => frames.find((f) => f.id === id)?.name ?? "frame"} exists={exists} go={(at) => openFrame(hist.stack[at], undefined, at)} /> : null} openFrame={openFrame} rename={() => setRenaming(current.id)} />}
           {pill}
         </div>
       ) : (
@@ -767,12 +845,12 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
       )}
       {boards ? (
         <BoardSwitcher boardId={boardId} close={() => setBoards(false)}>
-          {pages.length > 1 ? <PageMenu pages={pages} frames={frames} current={tilePage} pick={(id) => { setBoards(false); setTilePage(id); if (id && id !== editor.getCurrentPageId()) editor.setCurrentPage(id as TLPageId); toTiles(); }} /> : null}
+          <PageMenu pages={pages} frames={frames} current={tilePage} pick={(id) => { setBoards(false); setTilePage(id); if (id && id !== editor.getCurrentPageId()) editor.setCurrentPage(id as TLPageId); toTiles(); }} add={() => { setBoards(false); setCreating("page"); }} />
         </BoardSwitcher>
       ) : null}
 
       {mode === "tiles" ? (
-        <TilesHome editor={editor} frames={pageTiles(frames, tilePage)} pins={pins} touched={touched} now={now} openFrame={openFrame} openSearch={() => setSearch(true)} toBoard={toBoard} startAgent={startAgent} />
+        <TilesHome editor={editor} frames={pageTiles(frames, tilePage)} pins={pins} touched={touched} now={now} openFrame={openFrame} openSearch={() => setSearch(true)} toBoard={toBoard} startAgent={startAgent} openNew={() => setNewMenu(true)} />
       ) : null}
 
       {mode === "frame" && frameId && !reveal ? <FrameSpotlight editor={editor} frameId={frameId} /> : null}
@@ -805,10 +883,7 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
               </button>
             )}
             <button type="button" data-testid="mobile-search" onClick={() => setSearch(true)} aria-label="Search frames">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="11" cy="11" r="6.5" />
-                <path d="M16 16l4.5 4.5" />
-              </svg>
+              <AppIcon name="search" size={22} />
               <small>Search</small>
             </button>
             <HistoryButtons editor={editor} />
@@ -821,8 +896,10 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
       <Immersive editor={editor} active={mode !== "tiles" && !modalOpen} />
       {mode !== "tiles" && !search ? <MobileEdit editor={editor} frameId={mode === "frame" ? frameId : null} board={mode === "board"} threadOpen={threadOpen} /> : null}
 
-      {renaming && frames.some((f) => f.id === renaming) ? <RenameSheet editor={editor} frameId={renaming} close={() => setRenaming(null)} /> : null}
+      {renaming && frames.some((f) => f.id === renaming) ? <RenameSheet editor={editor} frameId={renaming} close={() => setRenaming(null)} moveOnBoard={() => moveOnBoard(renaming)} /> : null}
       {startFor ? <StartSheet key={startFor.id} editor={editor} boardId={boardId} frameId={startFor.id} prefill={startFor.prefill} beside={startFor.beside ? { name: frames.find((f) => f.id === startFor.id)?.name ?? "this frame", make: () => frameBeside(startFor.id) } : undefined} where={startFor.owned ? `New frame ${whereOnBoard(editor, startFor.id)}` : `In “${frames.find((f) => f.id === startFor.id)?.name ?? "this frame"}”`} onCancel={cancelStart} onStarted={started} /> : null}
+      {newMenu ? <NewMenu close={() => setNewMenu(false)} pick={pickNew} /> : null}
+      {creating ? <CreateSheet kind={creating} where={creating === "frame" ? `On ${pages.find((p) => p.id === (tilePage ?? editorPage))?.name ?? "this page"}` : "A separate space on this board"} create={creating === "page" ? createPage : createFrame} close={() => setCreating(null)} /> : null}
       {search ? <SearchSheet editor={editor} frames={frames} pins={pins} touched={touched} now={now} close={() => setSearch(false)} openFrame={openFrame} togglePin={togglePin} /> : null}
     </div>
   );
@@ -837,6 +914,7 @@ function BoardSwitcher({ boardId, close, children }: { boardId: string; close: (
     <>
       <div className="bm-scrim bm-scrim-clear" data-mobile-ui onPointerDown={close} />
       <div className="bm-boards" data-mobile-ui data-testid="mobile-boards" role="menu">
+        <ThemePicker />
         {list === null ? <p className="bm-empty">Loading boards…</p> : null}
         {(list ?? []).map((b) => (
           <Fragment key={b.id}>
@@ -855,7 +933,7 @@ function BoardSwitcher({ boardId, close, children }: { boardId: string; close: (
   );
 }
 
-function TilesHome({ editor, frames, pins, touched, now, openFrame, openSearch, toBoard, startAgent }: { editor: Editor; frames: Frame[]; pins: string[]; touched: Map<string, number>; now: number; openFrame: (id: string, thread?: boolean) => void; openSearch: () => void; toBoard: () => void; startAgent: () => void }) {
+function TilesHome({ editor, frames, pins, touched, now, openFrame, openSearch, toBoard, startAgent, openNew }: { editor: Editor; frames: Frame[]; pins: string[]; touched: Map<string, number>; now: number; openFrame: (id: string, thread?: boolean) => void; openSearch: () => void; toBoard: () => void; startAgent: () => void; openNew: () => void }) {
   const { pinned, pinnedFallback, recent, rest } = tileSections(frames, pins, touched);
   const pull = useDragCommit(-1, 120, toBoard);
   // All frames: the first rows at once, the rest added in idle time, 12 at a time (a live
@@ -913,13 +991,16 @@ function TilesHome({ editor, frames, pins, touched, now, openFrame, openSearch, 
               ))}
             </div>
           ) : (
-            <p className="bm-empty">{frames.length ? "Every frame is shown above." : "No frames yet. Tap Start agent."}</p>
+            <p className="bm-empty">{frames.length ? "Every frame is shown above." : "No frames yet. Tap Start agent, or + New to add a frame or import a conversation."}</p>
           )}
         </section>
       </div>
       <div className="bm-home-bar">
         <button type="button" className="bm-fab" data-testid="mobile-start" onClick={startAgent}>
           + Start agent
+        </button>
+        <button type="button" className="bm-new" data-testid="mobile-new" aria-haspopup="menu" onClick={openNew}>
+          + New
         </button>
         <TellBunnyButton />
       </div>
@@ -954,7 +1035,9 @@ function useSeen(ref: React.RefObject<HTMLElement | null>): boolean {
 function Tile({ editor, frame, touched, now, open }: { editor: Editor; frame: Frame; touched?: number; now: number; open: () => void }) {
   const self = useRef<HTMLButtonElement>(null);
   // The harness ("Claude") is asked for only once the tile is on screen.
-  const harness = useHarness(useSeen(self) ? frame.agentId : "");
+  const seen = useSeen(self) ? frame.agentId : "";
+  const summary = useAgentSummary(seen, !!seen);
+  const harness = harnessOf(seen, summary);
   return (
     <button ref={self} type="button" className="bm-tile" data-testid="mobile-frame-card" data-frame-id={frame.id} data-status={frame.rawStatus} data-touched={touched ?? ""} onClick={open}>
       <LiveThumb editor={editor} id={frame.id} />
@@ -963,6 +1046,7 @@ function Tile({ editor, frame, touched, now, open }: { editor: Editor; frame: Fr
         {frame.name}
       </span>
       <small>{agentLine(frame, harness)}</small>
+      <YouLine last={summary?.lastUserMessage} />
       <small className="bm-tile-when" data-tone={frame.preview ? "preview" : frame.rawStatus}>
         {frame.preview
           ? `preview · not connected${touched === undefined ? "" : ` · ${phoneAgo(touched, now)}`}`
@@ -1056,7 +1140,8 @@ function SearchSheet({ editor, frames, pins, touched, now, close, openFrame, tog
 }
 
 function ResultRow({ editor, frame, hit, pinned, report, when, openFrame, togglePin }: { editor: Editor; frame: Frame; hit?: SearchHit; pinned: boolean; report?: string; when: string; openFrame: (id: string, thread?: boolean) => void; togglePin: (id: string) => void }) {
-  const harness = useHarness(frame.agentId);
+  const summary = useAgentSummary(frame.agentId, !!frame.agentId);
+  const harness = harnessOf(frame.agentId, summary);
   return (
     <li data-testid="mobile-search-result" data-frame-id={frame.id}>
       <button type="button" className="bm-result-main" onClick={() => openFrame(frame.id)} aria-label={`Open ${frame.name}`}>
@@ -1070,6 +1155,7 @@ function ResultRow({ editor, frame, hit, pinned, report, when, openFrame, toggle
             {agentLine(frame, harness)}
             {editor.getPages().length > 1 ? <span data-testid="mobile-result-page"> · {frame.pageName}</span> : null}
           </small>
+          <YouLine last={summary?.lastUserMessage} testid="mobile-result-you" />
           {hit ? (
             <small className="bm-hit" data-testid="mobile-search-snippet" data-field={hit.field} data-kind={hit.kind}>
               {hit.snippet}
@@ -1115,13 +1201,26 @@ function QuickSwitch({ frames, order, current, jumps, openFrame, rename }: { fra
       {jumps}
       <div className="bm-chips" ref={strip}>
       {list.map((f) => (
-        <button key={f.id} type="button" className="bm-chip" data-testid="mobile-switch-chip" data-frame-id={f.id} aria-current={f.id === current} onClick={() => (f.id !== current ? openFrame(f.id) : rename?.())}>
-          <StatusDot status={f.rawStatus} />
-          {f.name}
-        </button>
+        <SwitchChip key={f.id} f={f} current={current} openFrame={openFrame} rename={rename} />
       ))}
       </div>
     </div>
+  );
+}
+
+// A quick-switch chip: status dot and name, and "You: …" under it where the strip has room
+// (portrait; mobile.css hides it in the landscape bar).
+function SwitchChip({ f, current, openFrame, rename }: { f: Frame; current: string; openFrame: (id: string, thread?: boolean) => void; rename?: () => void }) {
+  const summary = useAgentSummary(f.agentId, !!f.agentId);
+  const last = summary?.lastUserMessage;
+  return (
+    <button type="button" className="bm-chip" data-testid="mobile-switch-chip" data-frame-id={f.id} aria-current={f.id === current} data-has-you={last?.text ? "" : undefined} onClick={() => (f.id !== current ? openFrame(f.id) : rename?.())}>
+      <span className="bm-chip-name">
+        <StatusDot status={f.rawStatus} />
+        {f.name}
+      </span>
+      {last?.text ? <small className="bm-chip-you" data-testid="mobile-chip-you">You: {last.text}</small> : null}
+    </button>
   );
 }
 

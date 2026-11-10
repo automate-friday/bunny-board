@@ -1,3 +1,13 @@
+/* The layer all portal UI renders into (Portals.tsx usePortalLayer): above board shapes
+   (same z-index as tldraw's shapes layer, later in the DOM), under tldraw's UI. */
+.bunny-portal-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 300;
+  pointer-events: none;
+  overflow: hidden;
+}
+
 /* Sticky-note portals. Everything takes the source sticky's colour from --portal. */
 
 
@@ -18,9 +28,10 @@
   display: grid;
   place-items: center;
   cursor: pointer;
-  color: #fff;
-  background: var(--portal);
-  border: 2px solid #fff;
+  /* The portal icon in the sticky's colour on a white disc ringed in the same colour. */
+  color: var(--portal);
+  background: light-dark(#fff, var(--bunny-surface));
+  border: 2px solid var(--portal);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
   transition: transform 120ms ease, box-shadow 120ms ease;
 }
@@ -29,12 +40,12 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--portal) 30%, transparent), 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 .bunny-portal-badge .bunny-portal-open.on {
-  background: #fff;
-  color: var(--portal);
-  border-color: var(--portal);
+  background: var(--portal);
+  color: #fff;
+  border-color: light-dark(#fff, var(--bunny-line));
 }
 .bunny-portal-badge .bunny-portal-open.missing {
-  background: #bbb;
+  background: light-dark(#bbb, var(--bunny-raised));
   cursor: default;
 }
 
@@ -49,7 +60,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 14px;
+  padding: 0 4px 0 0;
   border-radius: 999px;
   background: color-mix(in srgb, var(--portal) 82%, #000);
   color: #fff;
@@ -62,11 +73,33 @@
   white-space: nowrap;
   animation: bunny-portal-in 160ms ease-out;
 }
-.bunny-portal-back:hover {
-  background: var(--portal);
+.bunny-portal-back-go,
+.bunny-portal-back-x {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+}
+.bunny-portal-back-go {
+  padding: 7px 8px 7px 14px;
+}
+.bunny-portal-back-x {
+  width: 22px;
+  height: 22px;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.8;
+}
+.bunny-portal-back-go:hover,
+.bunny-portal-back-x:hover {
+  background: light-dark(rgba(255, 255, 255, 0.18), color-mix(in srgb, #20242c 18%, transparent));
+  opacity: 1;
 }
 .bunny-portal-depth {
-  background: rgba(255, 255, 255, 0.25);
+  background: light-dark(rgba(255, 255, 255, 0.25), color-mix(in srgb, #20242c 25%, transparent));
   border-radius: 999px;
   padding: 0 6px;
   font-size: 11px;
@@ -112,7 +145,7 @@
   border-radius: 10px;
   border: 2px solid var(--portal);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--portal) 20%, transparent), 0 6px 18px rgba(0, 0, 0, 0.14);
-  background: var(--color-background, #fff);
+  background: var(--color-background, light-dark(#fff, var(--bunny-surface)));
   visibility: hidden;
   pointer-events: none;
 }
@@ -166,7 +199,7 @@
   cursor: pointer;
   padding: 3px 8px;
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.16);
+  background: light-dark(rgba(255, 255, 255, 0.16), color-mix(in srgb, #20242c 16%, transparent));
   font: 600 11px system-ui, sans-serif;
   display: grid;
   place-items: center;
@@ -179,18 +212,18 @@
 }
 .bunny-portal-chip button:hover,
 .bunny-portal-tools button:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: light-dark(rgba(255, 255, 255, 0.3), color-mix(in srgb, #20242c 30%, transparent));
 }
 .bunny-portal-chip button.primary {
-  background: #fff;
-  color: color-mix(in srgb, var(--portal) 85%, #000);
+  background: light-dark(#fff, var(--bunny-surface));
+  color: color-mix(in srgb, var(--portal) 85%, light-dark(#000, var(--bunny-ink)));
 }
 .bunny-portal-chip button.primary:hover {
-  background: rgba(255, 255, 255, 0.85);
+  background: light-dark(rgba(255, 255, 255, 0.85), color-mix(in srgb, #20242c 85%, transparent));
 }
 .bunny-portal-tools button.on {
-  background: #fff;
-  color: color-mix(in srgb, var(--portal) 85%, #000);
+  background: light-dark(#fff, var(--bunny-surface));
+  color: color-mix(in srgb, var(--portal) 85%, light-dark(#000, var(--bunny-ink)));
 }
 .bunny-portal-chip button.icon {
   padding: 1px 7px 3px;
@@ -202,6 +235,46 @@
   inset: 0;
   display: grid;
   place-items: center;
-  color: #888;
+  color: light-dark(#888, var(--bunny-muted));
   font: 13px system-ui, sans-serif;
+}
+
+/* --- the Portal tool (PortalTool.tsx) ------------------------------------------------ */
+.bunny-portal-tool-hint {
+  --portal: #7c66ff;
+  position: absolute;
+  bottom: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(560px, calc(100% - 32px));
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: light-dark(#fff, var(--bunny-surface));
+  color: light-dark(#1d1d1f, var(--bunny-ink));
+  border: 1.5px solid light-dark(#c9c9d1, var(--bunny-line));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  font: 500 13px system-ui, sans-serif;
+  pointer-events: none;
+  animation: bunny-portal-fade 120ms ease-out;
+}
+.bunny-portal-tool-hint .bunny-portal-icon {
+  flex: none;
+  color: light-dark(#7c66ff, hsl(249 88% 74%));
+}
+.bunny-portal-tool-hint.ready {
+  border-color: var(--portal);
+}
+.bunny-portal-tool-hint.ready .bunny-portal-icon {
+  color: var(--portal);
+}
+.bunny-portal-tool-area {
+  --portal: #7c66ff;
+  position: absolute;
+  border: 2px dashed var(--portal);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--portal) 10%, transparent);
+  pointer-events: none;
 }

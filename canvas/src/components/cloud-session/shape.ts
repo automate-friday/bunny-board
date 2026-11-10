@@ -35,7 +35,7 @@ export class CloudSessionShapeUtil extends BaseBoxShapeUtil<CloudSessionShape> {
 
   override component(shape: CloudSessionShape) {
     // Phone overview / off screen: a placeholder, no timers (mobile/lod.tsx).
-    return phoneLod(shape, true, () => createElement(CardPlaceholder, { w: shape.props.w, h: shape.props.h, title: shape.props.title || "Cloud session", tone: "#e3eefb" }), () => createElement(HTMLContainer, { id: shape.id, style: { width: shape.props.w, height: shape.props.h } }, createElement(CloudSessionRender, { shape })));
+    return phoneLod(shape, true, () => createElement(CardPlaceholder, { w: shape.props.w, h: shape.props.h, title: shape.props.title || "Cloud session", tone: "light-dark(#e3eefb, var(--bunny-raised))" }), () => createElement(HTMLContainer, { id: shape.id, style: { width: shape.props.w, height: shape.props.h } }, createElement(CloudSessionRender, { shape })));
   }
 
   override getIndicatorPath(shape: CloudSessionShape) {

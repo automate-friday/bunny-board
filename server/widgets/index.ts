@@ -5,6 +5,7 @@
 
 import { type AnyConfig, type WidgetState, widgetConfig, widgetKey, widgetManifest } from "../../shared/widgets";
 import { appSource } from "./app/source";
+import { contentCalendarSource } from "./content-calendar/source";
 import { helloSource } from "./hello";
 import { slackSource } from "./slack/source";
 import type { PluginRegistry } from "../plugins";
@@ -31,7 +32,7 @@ interface Entry {
 // an extra source replaces a default one with the same id (core passes the app source the
 // board's own origin, for its frame-ancestors check).
 export function defaultWidgetSources(extra: WidgetSource[] = []): WidgetSource[] {
-  return [helloSource(), slackSource(), appSource(), ...extra];
+  return [helloSource(), slackSource(), appSource(), contentCalendarSource(), ...extra];
 }
 
 export class WidgetHub {

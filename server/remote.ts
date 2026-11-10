@@ -27,7 +27,7 @@ import { redactBoardTokens } from './timeline';
 // receipt is never retried automatically (it may have arrived).
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { TranscriptRow, TranscriptSnapshot, TranscriptStatus } from "../shared/components/transcript";
@@ -186,6 +186,7 @@ export class RemoteAgents {
   private readonly pairedPending=new Map<string,Promise<unknown>>();
   private list: { rows: RemoteRow[]; at: number; inflight: Promise<void> | null; errors: Record<string, string> } = { rows: [], at: 0, inflight: null, errors: {} };
   private readonly readPool=new BoundedWork(2,200);
+  private readonly cacheFile: string | null;
   private stopped=false;
   private readonly watched = new Map<string, Watched>();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -196,8 +197,10 @@ export class RemoteAgents {
 
   constructor(
     private readonly log: (m: string) => void,
-    opts: { enabled?: boolean; bin?: string; run?: Run; clients?:HostClients; workspaces?:Record<string,string> } = {},
+    opts: { enabled?: boolean; bin?: string; run?: Run; clients?:HostClients; workspaces?:Record<string,string>; cacheFile?: string } = {},
   ) {
+    this.cacheFile = opts.cacheFile ?? null;
+    if (this.cacheFile) this.restoreList(this.cacheFile);
     this.workspaceTargets=opts.workspaces;
     this.clients=opts.clients??(opts.run||hasRemoteRuntimeFiles()?null:new HostClients(log));
     if(this.clients)this.clients.onConnection=(host,connection)=>{
@@ -383,6 +386,31 @@ export class RemoteAgents {
     return this.list.rows.find((r) => r.id === agentId && r.host === machine) ?? null;
   }
 
+  // The last Other Macs directory, kept in the state dir so a board restart shows it at
+  // once (marked stale) instead of an empty list while the relay answers again (5-20 s).
+  private restoreList(file: string): void {
+    if (!existsSync(file)) return void this.log(`remote directory: no saved list at ${file}`);
+    try {
+      const saved = JSON.parse(readFileSync(file, "utf8")) as { rows?: unknown; at?: unknown };
+      if (!Array.isArray(saved.rows) || typeof saved.at !== "number") throw Error("not {rows: [], at: number}");
+      this.list = { rows: saved.rows as RemoteRow[], at: saved.at, inflight: null, errors: {} };
+      this.log(`remote directory: restored ${saved.rows.length} saved rows from ${Math.round((Date.now() - saved.at) / 1000)} s ago`);
+    } catch (e) {
+      this.log(`remote directory: could not read saved list ${file}: ${(e as Error).message}`);
+    }
+  }
+
+  private saveList(): void {
+    if (!this.cacheFile) return;
+    const tmp = `${this.cacheFile}.tmp`;
+    try {
+      writeFileSync(tmp, JSON.stringify({ rows: this.list.rows, at: this.list.at }));
+      renameSync(tmp, this.cacheFile);
+    } catch (e) {
+      this.log(`remote directory: could not save list to ${this.cacheFile}: ${(e as Error).message}`);
+    }
+  }
+
   private refreshList(): Promise<void> {
     if (this.list.inflight) return this.list.inflight;
     this.list.inflight = (async () => {
@@ -417,6 +445,7 @@ export class RemoteAgents {
       const retained = this.list.rows.filter(r => errors.all || errors[r.host]);
       const publishedRows = [...new Map([...retained, ...rows].map(r => [`${r.host}/${r.id}`, r])).values()];
       this.list = { rows: publishedRows, at: Date.now(), inflight: null, errors };
+      this.saveList();
       if (Object.keys(errors).length) {
         this.stats.errors++;
         this.log(`remote agents: ${publishedRows.length} listed, errors ${JSON.stringify(errors)}`);
@@ -444,6 +473,7 @@ export class RemoteAgents {
   // Whether the board can stop this host's agents: only over a paired Paseo connection (the
   // same DaemonClient the board uses for its own daemon). af-network messages and the split
   // runtime companion have no stop.
+  async nativeSession(host:string){await this.hosts();return this.clients?.paired(host)?this.clients.get(host):null;}
   canCancel(host:string):boolean { return this.enabled && !hasRemoteRuntimeFiles() && !!this.clients?.paired(host); }
   cancelBlocked(host:string):string {
     if(!this.enabled)return 'Remote connections are disabled in this board environment';
@@ -475,7 +505,7 @@ export class RemoteAgents {
   }
 
   snapshot(agentId: string): TranscriptSnapshot | null {
-    const snap=this.watched.get(agentId)?.snap;return snap?{...snap,remote:snap.remote?{...snap.remote,coverage:"messages-only",stale:!!snap.error||!snap.remote.polledAt||Date.now()-snap.remote.polledAt>45000,staleAfterMs:45000}:undefined}:null;
+    const snap=this.watched.get(agentId)?.snap;return snap?{...snap,remote:snap.remote?{...snap.remote,coverage:snap.remote.coverage??"messages-only",stale:!!snap.error||!snap.remote.polledAt||Date.now()-snap.remote.polledAt>45000,staleAfterMs:45000}:undefined}:null;
   }
 
   unwatchView(agentId:string):void {const w=this.watched.get(agentId);if(!w)return;w.unsub?.();w.unsub=undefined;w.session=undefined;if(w.refreshTimer)clearTimeout(w.refreshTimer);w.refreshTimer=undefined;}
@@ -505,12 +535,12 @@ export class RemoteAgents {
     const version=w.readVersion=(w.readVersion??0)+1;
     const valid=()=>!this.stopped&&this.watched.get(w.agentId)===w&&w.session===session&&w.readVersion===version;
     const publish=()=>{if(valid()){w.snap=result;this.onSnapshot?.(w.agentId,result);}};
-    let result:TranscriptSnapshot={...(w.snap??{agentId:w.agentId,title:null,status:'idle',rows:[]}),error:undefined,updatedAt:Date.now(),connection:this.clients!.health(w.host),remote:{host:w.host,polledAt:Date.now(),coverage:'messages-only',stale:false,staleAfterMs:45000}};
+    let result:TranscriptSnapshot={...(w.snap??{agentId:w.agentId,title:null,status:'idle',rows:[]}),error:undefined,updatedAt:Date.now(),connection:this.clients!.health(w.host),remote:{host:w.host,polledAt:Date.now(),coverage:'projected-timeline',stale:false,staleAfterMs:45000}};
     await Promise.all([
       withDaemonRead(()=>this.pairedOnce(`${w.host}/${w.agentId}:metadata`,()=>ref.refresh()).then(value=>{if(!valid())return;result={...result,title:value?.agent.title??result.title,status:statusOf(value?.agent)};publish();})),
       withDaemonRead(()=>this.pairedOnce(`${w.host}/${w.agentId}:tail`,()=>ref.timeline.refetch({direction:'tail',limit:60,projection:'projected'})).then(page=>{
         if(!valid())return;
-        result={...result,rows:remoteRows({messages:timelineRows(page,w.agentId).filter(row=>row.kind==='assistant'||row.kind==='user'||row.kind.startsWith('plugin:')).map(row=>({role:row.kind==='assistant'?'assistant':'user',text:row.text,timestamp:row.at}))}),updatedAt:Date.now()};
+        result={...result,rows:timelineRows(page,w.agentId),updatedAt:Date.now()};
         publish();
       })),
     ]);

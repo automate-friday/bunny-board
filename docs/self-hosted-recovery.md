@@ -272,9 +272,31 @@ not have been written to `.env`. Reapply the reviewed values and adjust host pat
 blindly execute the resolved file with its old absolute paths. Check the chosen ports.
 For a drill, edit `.env` to use unused
 loopback ports for **all three** published ports, update `BOARD_PUBLIC_URL`, and use a
-throwaway project name. Real restored auth must not be used to run test jobs. Any automatic
-outbox work can resume on startup; use dummy-state/auth fixtures for a rehearsal. This
-real-state restore procedure is not itself a safe fixture generator.
+throwaway project name. Any saved outbox work can resume on startup. Never rehearse
+with a backup of a live installation or its credentials.
+
+### Prepare a disposable recovery fixture
+
+Start with a fresh disposable installation using the [VPS guide](install-vps.md).
+Use only synthetic notes and attachments, no customer data or connected services.
+Ask the operator to authorize normal provider login specifically for this test and
+the small continuation task after restoration; use the provider's normal login flow
+inside this installation. Do not copy credentials from another host or deployment.
+If that authorization is unavailable, record live-provider recovery as unverified.
+Dummy credentials cannot prove an authenticated conversation can continue.
+
+Complete [the useful-task and restart checks](install-vps.md#6-prove-a-useful-task-and-return),
+including the synthetic attachment and workspace-file sentinel. Record the frame,
+conversation and file locations. Finish every agent turn and confirm there are no
+running tasks, scheduled tasks or pending outbox messages before taking the snapshot.
+Use section 1 above to capture this disposable installation's six volumes,
+configuration, exact source and running images. Keep its original project stopped.
+
+Use that snapshot with section 3's fresh-project restore commands. After restoration,
+confirm the notes, conversation, attachment and workspace sentinel are present, then
+send one small operator-authorized continuation request in the same frame. Record any
+provider reauthentication as an intervention; do not call dummy-state restoration a
+successful live-provider recovery. Keep the original installation stopped throughout.
 
 The following checks prevent accidentally selecting existing volumes; do not continue if
 the project already exists or any target volume is found. `create` makes containers and

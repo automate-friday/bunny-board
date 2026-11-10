@@ -26,11 +26,11 @@ export function StampPill({ kind, by, at, note, state }: Pick<StampProps, "by" |
   const title = `${info.label} by ${by || "you"} · ${stampTime(at)}${state ? ` · ${STAMP_STATE_TEXT[state]}` : ""}${note ? ` · “${note}”` : ""}`;
   return (
     <div data-testid="stamp" data-kind={kind} data-state={state || "none"} title={title} style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, font: "12px system-ui, sans-serif", userSelect: "none" }}>
-      <div style={{ height: 28, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 6, padding: "0 6px 0 3px", border: `1.5px solid ${ink}`, borderRadius: 14, background: "#fff", boxShadow: "0 2px 8px rgba(20,30,60,.16)", whiteSpace: "nowrap" }}>
+      <div style={{ height: 28, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 6, padding: "0 6px 0 3px", border: `1.5px solid ${ink}`, borderRadius: 14, background: "light-dark(#fff, var(--bunny-surface))", boxShadow: "0 2px 8px rgba(20,30,60,.16)", whiteSpace: "nowrap" }}>
         <span style={{ width: 21, height: 21, borderRadius: 11, background: ink, color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
           <StampIcon name={info.icon} size={13} strokeWidth={2.4} />
         </span>
-        <span style={{ fontWeight: 650, color: "#223" }}>{info.label}</span>
+        <span style={{ fontWeight: 650, color: "light-dark(#223, var(--bunny-ink))" }}>{info.label}</span>
         {badge ? (
           <span data-testid="stamp-state" data-state={state} title={STAMP_STATE_TEXT[state]} style={{ color: badge.color, display: "inline-flex", animation: state === "acting" ? "bunny-stamp-pulse 1.2s ease-in-out infinite" : undefined }}>
             <StampIcon name={badge.icon} size={14} strokeWidth={2.2} />
@@ -38,7 +38,7 @@ export function StampPill({ kind, by, at, note, state }: Pick<StampProps, "by" |
         ) : null}
       </div>
       {note ? (
-        <div data-testid="stamp-note" style={{ maxWidth: "100%", boxSizing: "border-box", padding: "1px 7px", borderRadius: 7, background: "#fff", border: "1px solid #e1e4ea", color: "#334", fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{note}</div>
+        <div data-testid="stamp-note" style={{ maxWidth: "100%", boxSizing: "border-box", padding: "1px 7px", borderRadius: 7, background: "light-dark(#fff, var(--bunny-surface))", border: "1px solid light-dark(#e1e4ea, var(--bunny-line))", color: "light-dark(#334, var(--bunny-ink))", fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{note}</div>
       ) : null}
     </div>
   );

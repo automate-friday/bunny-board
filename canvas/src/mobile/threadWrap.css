@@ -13,13 +13,13 @@ html.bunny-mobile [data-testid=sidebar][data-sheet="1"] :where(img, video, svg, 
 
 /* Thread tools (ThreadTools.tsx). */
 .bm-title-edit { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
-.bm-title-edit input { flex: 1; min-width: 0; min-height: 40px; box-sizing: border-box; padding: 6px 10px; border: 2px solid #8875F6; border-radius: 10px; font: 600 16px system-ui, sans-serif; color: #0f172a; background: #fff; -webkit-user-select: text; user-select: text; }
-.bm-title-edit button { flex: none; min-height: 40px; min-width: 56px; border: 0; border-radius: 10px; background: #8875F6; color: #fff; font: 700 15px system-ui, sans-serif; cursor: pointer; }
-.bm-field-label { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: rgba(46,31,22,.6); }
+.bm-title-edit input { flex: 1; min-width: 0; min-height: 40px; box-sizing: border-box; padding: 6px 10px; border: 2px solid light-dark(#8875F6, hsl(249 35% 39%)); border-radius: 10px; font: 600 16px system-ui, sans-serif; color: light-dark(#0f172a, hsl(222 50% 74%)); background: light-dark(#fff, var(--bunny-surface)); -webkit-user-select: text; user-select: text; }
+.bm-title-edit button { flex: none; min-height: 40px; min-width: 56px; border: 0; border-radius: 10px; background: light-dark(#8875F6, hsl(249 45% 21%)); color: #fff; font: 700 15px system-ui, sans-serif; cursor: pointer; }
+.bm-field-label { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: light-dark(rgba(46,31,22,.6), color-mix(in srgb, #edf0f7 60%, transparent)); }
 .bm-msg-layer { position: fixed; inset: 0; z-index: 1002; }
-.bm-msg-scrim { position: absolute; inset: 0; background: rgba(23,18,27,.18); }
-.bm-msg-menu { position: absolute; left: 16px; right: 16px; max-width: 360px; margin: 0 auto; display: flex; flex-direction: column; padding: 6px; background: #fff; border: 1px solid rgba(46,31,22,.12); border-radius: 14px; box-shadow: 0 12px 34px rgba(46,31,22,.22); font: 15px system-ui, sans-serif; }
-.bm-msg-menu button { min-height: 48px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; text-align: left; font: 600 15px system-ui, sans-serif; color: #2E1F16; cursor: pointer; }
-.bm-msg-menu button:active { background: #EFE8FE; }
-.bm-menu-action { display: block; width: 100%; min-height: 44px; text-align: left; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; color: #0f172a; font: 600 14px system-ui, sans-serif; cursor: pointer; }
-.bm-menu-action[data-tone=primary] { background: #8875F6; border-color: #8875F6; color: #fff; }
+.bm-msg-scrim { position: absolute; inset: 0; background: light-dark(rgba(23,18,27,.18), color-mix(in srgb, #2b303b 18%, transparent)); }
+.bm-msg-menu { position: absolute; left: 16px; right: 16px; max-width: 360px; margin: 0 auto; display: flex; flex-direction: column; padding: 6px; background: light-dark(#fff, var(--bunny-surface)); border: 1px solid light-dark(rgba(46,31,22,.12), color-mix(in srgb, hsl(23 35% 39%) 12%, transparent)); border-radius: 14px; box-shadow: 0 12px 34px rgba(46,31,22,.22); font: 15px system-ui, sans-serif; }
+.bm-msg-menu button { min-height: 48px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; text-align: left; font: 600 15px system-ui, sans-serif; color: light-dark(#2E1F16, var(--bunny-ink)); cursor: pointer; }
+.bm-msg-menu button:active { background: light-dark(#EFE8FE, hsl(259 45% 21%)); }
+.bm-menu-action { display: block; width: 100%; min-height: 44px; text-align: left; padding: 8px 10px; border: 1px solid light-dark(#e2e8f0, var(--bunny-line)); border-radius: 10px; background: light-dark(#fff, var(--bunny-surface)); color: light-dark(#0f172a, hsl(222 50% 74%)); font: 600 14px system-ui, sans-serif; cursor: pointer; }
+.bm-menu-action[data-tone=primary] { background: light-dark(#8875F6, hsl(249 45% 21%)); border-color: light-dark(#8875F6, hsl(249 35% 39%)); color: #fff; }

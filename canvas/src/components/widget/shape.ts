@@ -34,7 +34,7 @@ export class WidgetShapeUtil extends BaseBoxShapeUtil<WidgetShape> {
 
   override component(shape: WidgetShape) {
     // Phone overview / off screen: a placeholder, no polling (mobile/lod.tsx).
-    return phoneLod(shape, true, () => createElement(CardPlaceholder, { w: shape.props.w, h: shape.props.h, title: widgetManifest(shape.props.widgetId)?.label ?? "Widget", tone: "#e5f4ea" }), () => createElement(HTMLContainer, { id: shape.id, style: { width: shape.props.w, height: shape.props.h } }, createElement(WidgetRender, { shape })));
+    return phoneLod(shape, true, () => createElement(CardPlaceholder, { w: shape.props.w, h: shape.props.h, title: widgetManifest(shape.props.widgetId)?.label ?? "Widget", tone: "light-dark(#e5f4ea, var(--bunny-raised))" }), () => createElement(HTMLContainer, { id: shape.id, style: { width: shape.props.w, height: shape.props.h } }, createElement(WidgetRender, { shape })));
   }
 
   override getIndicatorPath(shape: WidgetShape) {

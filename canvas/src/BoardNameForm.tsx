@@ -19,6 +19,6 @@ export function BoardNameForm({ narrow, onOpen, onClose }: { narrow: boolean; on
     <input data-testid="new-board-name" autoFocus value={name} placeholder="Board name" style={{ width: narrow ? 110 : 150, padding: "4px 6px" }} onChange={e => { generation.current++; controller.current?.abort(); setBusy(false); setName(e.target.value); setResolved(null); setError(null); }} onKeyDown={e => { e.stopPropagation(); if (e.key === "Escape") onClose(); }} />
     <button type="submit" disabled={busy || !name.trim()}>{busy ? "Resolving…" : resolved ? "Open selected board" : "Resolve name"}</button><button type="button" onClick={onClose} aria-label="Cancel board name">×</button>
     {resolved ? <div data-testid="resolved-board" style={{ flexBasis: "100%" }}>{resolved.existing ? "Existing" : "New"} board: <strong>{resolved.boardId}</strong> · {resolved.matchedBy}</div> : null}
-    {error ? <div role="alert" style={{ flexBasis: "100%", color: "#b00020" }}>{error}</div> : null}
+    {error ? <div role="alert" style={{ flexBasis: "100%", color: "light-dark(#b00020, hsl(349 88% 74%))" }}>{error}</div> : null}
   </form>;
 }

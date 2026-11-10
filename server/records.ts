@@ -22,7 +22,7 @@ export interface FramePaseoMeta {
   compression?: { messageId: string; archiveId: string; w: number; h: number; status: "pending" | "complete" };
   relink?: {agentId:string;host?:string;reason:"restored-or-copied";requiresConfirmation:true};
   request?:
-    | { kind: "create"; provider?: string; host?: string; workspaceId?: string; context?: "board" | "repo"; prompt?: string; cloud?: boolean; cloudProvider?: CloudProvider; requestedAt: number; by?: string }
+    | { kind: "create"; cwd?: string; provider?: string; host?: string; workspaceId?: string; context?: "board" | "repo"; prompt?: string; cloud?: boolean; cloudProvider?: CloudProvider; requestedAt: number; by?: string }
     | { kind: "link"; agentId: string; requestedAt: number; by?: string };
   remoteStart?: import("./remote-start").RemoteStartIntent;
   workspaceSetup?: {phase: "provisioning"|"fallback"|"queued"|"ready";mode:"plain"|"repo"|"stored";workspaceId?:string;cwd?:string;reason?:string;fallbackFrom?:string;startedAt?:number};

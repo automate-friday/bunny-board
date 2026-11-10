@@ -13,11 +13,12 @@
 // re-measures its screen position when that settles or the pointer comes in.
 import { TLDRAW_LICENSE_KEY } from "../tldraw-license";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Box, type Editor, type TLAnyShapeUtilConstructor, type TLEventInfo, type TLShapeId, Tldraw, useQuickReactor, useValue } from "tldraw";
+import { Box, type Editor, react, type TLAnyShapeUtilConstructor, type TLEventInfo, type TLShapeId, Tldraw, useQuickReactor, useValue } from "tldraw";
 import { PortalMirror } from "./mirror";
+import { installEditKeyBuffer } from "../editKeyBuffer";
 import { portalOf } from "../../../shared/portal";
 import { installLayoutGuard } from "../locks";
-import { PortalIcon, portalBounds, portalColor, portalLabel } from "./Portals";
+import { livePortal, PortalIcon, portalBounds, portalColor, portalLabel } from "./Portals";
 
 const stop = (e: React.SyntheticEvent) => e.stopPropagation();
 const RIFT_W = 580;
@@ -54,7 +55,7 @@ export const PortalRift = memo(function PortalRift({ board, noteId, shapeUtils, 
   const tool = useValue("portal-rift-tool", () => inner?.getCurrentToolId() ?? "select", [inner]);
   const [focused, setFocused] = useState(false);
   const target = () => {
-    const p = noteId ? portalOf(board.getShape(noteId as TLShapeId)) : null;
+    const p = noteId ? livePortal(board, board.getShape(noteId as TLShapeId)) : null;
     return p ? portalBounds(board, p) : null;
   };
 
@@ -155,12 +156,19 @@ export const PortalRift = memo(function PortalRift({ board, noteId, shapeUtils, 
     ed.on("before-event", onBefore);
     ed.on("event", onAfter);
     const stopGuard = installLayoutGuard(ed, toast);
+    // Keys typed before the sticky's text box has focus are replayed, not dropped.
+    const stopKeys = installEditKeyBuffer(ed);
+    // The sticky being typed into is never overwritten from the board mid-edit, and the
+    // edit is sent to the board the moment it ends.
+    const stopEditing = react("portal-editing", () => mirror.setEditing(ed.getEditingShapeId()));
     return () => {
+      stopKeys();
+      stopEditing();
       ed.off("before-event", onBefore);
       ed.off("event", onAfter);
       stopGuard();
     };
-  }, [board, toast]);
+  }, [board, toast, mirror]);
 
   // Follow the sticky: written straight to the element as the board camera moves (no
   // React render). The rift's editor re-measures its screen bounds once the movement

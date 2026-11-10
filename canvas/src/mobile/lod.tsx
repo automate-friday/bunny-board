@@ -44,10 +44,10 @@ export function CardPlaceholder({ w, h, title, tone = "#e7e2f7" }: { w: number; 
   return (
     <HTMLContainer
       data-phone-placeholder=""
-      style={{ width: w, height: h, borderRadius: 10, background: tone, border: "1px solid rgba(0,0,0,.12)", overflow: "hidden", display: "flex", alignItems: "flex-start", padding: 12, boxSizing: "border-box" }}
+      style={{ width: w, height: h, borderRadius: 10, background: tone, border: "1px solid light-dark(rgba(0,0,0,.12), color-mix(in srgb, #454d5c 12%, transparent))", overflow: "hidden", display: "flex", alignItems: "flex-start", padding: 12, boxSizing: "border-box" }}
     >
       {/* Readable when zoomed out, but never bigger than the card holds; one line. */}
-      <span style={{ font: `600 min(calc(12px / max(var(--tl-zoom, 1), 0.08)), ${Math.max(10, Math.min(w / 9, h / 2.5))}px) Inter, system-ui, sans-serif`, lineHeight: 1.15, color: "#2e1f16", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{title}</span>
+      <span style={{ font: `600 min(calc(12px / max(var(--tl-zoom, 1), 0.08)), ${Math.max(10, Math.min(w / 9, h / 2.5))}px) Inter, system-ui, sans-serif`, lineHeight: 1.15, color: "light-dark(#2e1f16, var(--bunny-ink))", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{title}</span>
     </HTMLContainer>
   );
 }

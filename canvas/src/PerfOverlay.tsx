@@ -22,7 +22,7 @@ export function PerfOverlay() {
   return (
     <div
       data-testid="perf-overlay"
-      style={{ position: "fixed", right: 8, bottom: 64, zIndex: 10000, background: "rgba(255,255,255,0.94)", color: "#222", border: "1px solid #ccc", borderRadius: 8, padding: "6px 8px", font: "11px/1.35 ui-monospace,monospace", pointerEvents: "none", minWidth: 200 }}
+      style={{ position: "fixed", right: 8, bottom: 64, zIndex: 10000, background: "light-dark(rgba(255,255,255,0.94), color-mix(in srgb, #20242c 94%, transparent))", color: "light-dark(#222, var(--bunny-ink))", border: "1px solid light-dark(#ccc, var(--bunny-line))", borderRadius: 8, padding: "6px 8px", font: "11px/1.35 ui-monospace,monospace", pointerEvents: "none", minWidth: 200 }}
     >
       <div>
         frame p50 <b style={{ color: tone(s.p50) }}>{s.p50.toFixed(1)}</b> p95 <b style={{ color: tone(s.p95) }}>{s.p95.toFixed(1)}</b> ms

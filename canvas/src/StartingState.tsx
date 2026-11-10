@@ -3,7 +3,7 @@ export function StartingState({ requestedAt, error, retry }: { requestedAt?: num
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   const elapsed = typeof requestedAt === "number" && Number.isFinite(requestedAt) ? Math.max(0, Math.floor((now - requestedAt) / 1000)) : null;
-  return <div data-testid="frame-starting-state" role="status" style={{ flexBasis: "100%", color: "#805000" }}>
+  return <div data-testid="frame-starting-state" role="status" style={{ flexBasis: "100%", color: "light-dark(#805000, hsl(38 88% 74%))" }}>
     Starting conversation{elapsed === null ? " · request time unavailable" : ` · ${elapsed}s since request`}. Waiting for Paseo to bind this frame.
     {retry ? <div>Same request retained{typeof retry.attempt === "number" ? ` · retry ${retry.attempt}` : ""}{typeof retry.nextAt === "number" ? retry.nextAt > now ? ` · next retry in ${Math.ceil((retry.nextAt - now) / 1000)}s` : " · retry due" : ""}. No second conversation requested.</div> : null}
     {error || retry?.lastError ? <div role="alert">{error ?? retry?.lastError}</div> : null}

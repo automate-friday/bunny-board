@@ -2,26 +2,30 @@ import {startHostsMemo,watchStartHosts} from "../startHosts";
 // Phone shell: the New agent start form as a bottom sheet above everything else (scrim,
 // spotlight, frame panel), sized to the visual viewport so the keyboard never hides Cancel
 // or Start. Same request as the desktop frame panel's start form (FramePanel.tsx): the
-// conversation's model, an opening message and where it runs (the board's runtime, a fleet
-// host, or an ephemeral worker with its cloud builder). The runtime choice names the machine
-// the agent will really run on (/api/ui/info agentMachine), never "this Mac".
+// conversation's model, an opening message and where it runs: one choice naming the machine
+// (the board's runtime or a fleet host) plus a Cloud agent switch (a cloud builder writes the
+// code; the agent itself still runs on the board's machine). The runtime choice names the
+// machine the agent will really run on (/api/ui/info agentMachine), never "this Mac".
 // Start is one request per tap (disabled while it is written); a frame the shell drew for
 // this sheet goes away again if the sheet is dismissed without Start.
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Editor, TLFrameShape, TLShapeId } from "tldraw";
 import { useValue } from "tldraw";
 import { api } from "../api";
 import { boardInfo, infoNow } from "../info";
 import { ModelSheet } from "./ModelSheet";
 import { placePhotos } from "./placePhotos";
+import { PhotoIcon, PhotoTray } from "./PhotoTray";
 import { useModalHold } from "./modalHold";
 import { cleanName, nameFromRequest } from "../../../shared/frame-names";
 import { B, BUNNY_CONTROLS_CSS, fieldLabel } from "../bunnyTheme";
 import { FALLBACK_PROVIDERS, fallbackCatalogue, findChoice, initialChoice, type StartCatalogue } from "../../../shared/start-catalogue";
 import { CLOUD_PROVIDERS, CLOUD_PROVIDER_LABEL, type CloudProvider } from "../../../shared/cloud-provider";
-import { fleetHostsForRuntime, initialRunsOn, runsOnRequest } from "../../../shared/conversation-links";
+import { upstashDefault, executionLabel, fleetHostsForRuntime, initialRunsOn, machineLabel, runsOnRequest, runsOnSummary } from "../../../shared/conversation-links";
 import "./startSheet.css";
+import { QuickStarts } from "../QuickStarts";
+import { recordOpeningPrompt, takePendingPrompt } from "../quickStartPrompts";
 
 // "Open the start sheet for this frame", from anywhere on the phone (the frame panel's
 // Start conversation on an empty frame); the shell shows it.
@@ -74,6 +78,13 @@ export function useVisibleViewport(): { top: number; height: number } {
   return vp;
 }
 
+// The model the last agent started from this phone used (a prefill still wins).
+const LAST_PROVIDER = "bunny:last-provider";
+const lastProvider = () => { try { return localStorage.getItem(LAST_PROVIDER); } catch { return null; } };
+const MAX_PHOTOS = 6;
+// Image files from a paste (a screenshot copied on the phone or the clipboard).
+const pastedImages = (e: React.ClipboardEvent) => Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
+
 // The machine local agents run on: the board's Paseo daemon's host, or null when unknown.
 function useAgentMachine(): string | null {
   const now = () => (infoNow() as { agentMachine?: string | null } | null)?.agentMachine ?? null;
@@ -108,7 +119,15 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
   const machine = useAgentMachine();
   const [catalogue, setCatalogue] = useState<StartCatalogue | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
-  const [line, setLine] = useState(prefill?.prompt ?? "");
+  const [line, setLine] = useState(() => prefill?.prompt ?? takePendingPrompt(frameId) ?? "");
+  // Screenshots go into the frame before the agent starts: Tell Bunny's, plus any added here.
+  const [photos, setPhotos] = useState<File[]>(() => prefill?.files ?? []);
+  const previews = useMemo(() => photos.map((f) => URL.createObjectURL(f)), [photos]);
+  useEffect(() => () => previews.forEach((u) => URL.revokeObjectURL(u)), [previews]);
+  const picker = useRef<HTMLInputElement>(null);
+  const addPhotos = (more: File[]) => more.length && setPhotos((p) => [...p, ...more].slice(0, MAX_PHOTOS));
+  // The opening message full screen (the rest of the form folds away until it closes).
+  const [full, setFull] = useState(false);
   // The frame's (and so the agent's) name. Empty keeps "New agent", or takes a title from the
   // opening message the way the server would (shared/frame-names.ts).
   const [name, setName] = useState(() => {
@@ -117,25 +136,37 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
     return n === "New agent" ? "" : n;
   });
   // Runs on: shared with the desktop form's choice (localStorage "bunny:runs-on").
+  const ephemeral = upstashDefault(infoNow());
   const saved = () => { try { return localStorage.getItem("bunny:runs-on"); } catch { return null; } };
   // A prefill (same as the agent it was started from) wins over the remembered choice.
   const fromAgent = !!prefill && (prefill.host !== undefined || prefill.worker !== undefined);
   const [cloud, setCloud] = useState(() => (fromAgent ? !!prefill?.worker && !prefill?.host : initialRunsOn(infoNow(), saved())));
-  const [startHost, setStartHost] = useState(() => (fromAgent ? prefill?.host ?? "" : saved()?.startsWith("host:") ? saved()!.slice(5) : ""));
+  const [startHost, setStartHost] = useState(() => (fromAgent ? prefill?.host ?? "" : ephemeral ? "" : saved()?.startsWith("host:") ? saved()!.slice(5) : ""));
   const remember = (value: string) => { try { localStorage.setItem("bunny:runs-on", value); } catch { /* storage blocked */ } };
-  const pick = (target: { host: string } | "runtime" | "worker") => {
-    if (typeof target === "object") { setStartHost(target.host); setCloud(false); remember(`host:${target.host}`); }
-    else { setStartHost(""); setCloud(target === "worker"); remember(target); }
+  // A fleet host; "runtime" (the board's machine, keeping the cloud box as it was); or the
+  // ☁ Use cloud agent box on/off ("worker"/"local"), which always runs on the board's machine.
+  const pick = (target: { host: string } | "runtime" | "worker" | "local") => {
+    if (typeof target === "object") { setStartHost(target.host); setCloud(false); remember(`host:${target.host}`); return; }
+    const next = target === "runtime" ? !startHost && cloud : target === "worker";
+    setStartHost(""); setCloud(next); remember(next ? "worker" : "runtime");
   };
   type StartHost = { host: string; state: string; enabled: boolean; reason?: string };
   const [hosts, setHosts] = useState<{ list: StartHost[]; note: string | null; loading: boolean; error: string | null }>({ list: startHostsMemo().hosts, note: null, loading: startHostsMemo().refreshing, error: null });
+  // No refresh button: the list is asked for fresh when the sheet opens, again every 30 s while
+  // it is open, and when the phone comes back to the page.
   const [hostsTick, setHostsTick] = useState(0);
+  useEffect(() => {
+    const again = () => document.visibilityState === "visible" && setHostsTick((n) => n + 1);
+    const timer = setInterval(again, 30_000);
+    document.addEventListener("visibilitychange", again);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", again); };
+  }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `hostsTick` asks again.
   useEffect(() => {
     return watchStartHosts(r=>setHosts({list:fleetHostsForRuntime(r.hosts,infoNow()?.runtimeHostname || ""),note:r.note??null,loading:r.refreshing,error:null}),
-      e=>setHosts(h=>({...h,loading:false,error:`Could not check hosts: ${e.message}`})),hostsTick>0);
+      e=>setHosts(h=>({...h,loading:false,error:e.message})),true);
   }, [hostsTick]);
-  const worker = !startHost && cloud;
+  const worker = !ephemeral && !startHost && cloud;
   const [cloudProvider, setCloudProvider] = useState<CloudProvider>(() => ((CLOUD_PROVIDERS as readonly string[]).includes(prefill?.cloudProvider ?? "") ? (prefill!.cloudProvider as CloudProvider) : "claude"));
   const [codexReadiness, setCodexReadiness] = useState<{ ready: boolean; error?: string } | null>(null);
   const [pending, setPending] = useState(false);
@@ -157,7 +188,9 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
             // (a harness with no model known: that harness's default model).
             setProvider((p) => {
               if (p) return p;
-              const like = prefill?.provider ? findChoice(c, prefill.provider) : null;
+              // A prefill (an agent like that one) first, then the model last started here.
+              const want = prefill?.provider || lastProvider();
+              const like = want ? findChoice(c, want) : null;
               return like?.model?.value ?? (like?.harness ? (like.harness.models.find((m) => m.isDefault) ?? like.harness.models[0])?.value : undefined) ?? initialChoice(c);
             });
           }),
@@ -198,16 +231,10 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
     if (busy.current || !ready || !provider || !live || paseo.agentId || paseo.request) return;
     busy.current = true;
     setPending(true);
-    // Screenshots first, so the agent finds them in its frame when it starts.
-    if (prefill?.files?.length && boardId) {
-      try {
-        await placePhotos(editor, boardId, live.id, prefill.files);
-      } catch (e) {
-        setPhotoError(`Photos not placed: ${(e as Error).message}. Starting without them.`);
-      }
-    }
+    try { localStorage.setItem(LAST_PROVIDER, provider); } catch { /* storage blocked */ }
     const by = window.__board?.userName ?? "User";
-    const request = { kind: "create", provider, prompt: line.trim() || undefined, ...runsOnRequest(cloud, cloudProvider, startHost), requestedAt: Date.now(), by };
+    recordOpeningPrompt(line);
+    const request = { kind: "create", provider, prompt: line.trim() || undefined, ...runsOnRequest(ephemeral ? false : cloud, cloudProvider, startHost), requestedAt: Date.now(), by };
     // "New frame next to it": the frame is drawn now, beside this one.
     const targetId = placeNew && beside ? beside.make() : live.id;
     const target = targetId ? (editor.getShape(targetId as TLShapeId) as TLFrameShape | undefined) : undefined;
@@ -215,6 +242,14 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
       busy.current = false;
       setPending(false);
       return;
+    }
+    // Screenshots first, so the agent finds them in its frame when it starts.
+    if (photos.length && boardId) {
+      try {
+        await placePhotos(editor, boardId, target.id, photos);
+      } catch (e) {
+        setPhotoError(`Photos not placed: ${(e as Error).message}. Starting without them.`);
+      }
     }
     // biome-ignore lint/suspicious/noExplicitAny: meta JSON.
     const { phoneDraft: _draft, ...meta } = (target.meta ?? {}) as Record<string, any>;
@@ -233,7 +268,7 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
 
   // The board's runtime: the machine its Paseo daemon reports, else the configured runtime host.
   const runtime = machine || infoNow()?.runtimeHostname || "";
-  const runtimeText = runtime || "Board's agent machine";
+  const runtimeText = runtime ? machineLabel(runtime, infoNow()?.boardHostname) : "The board's Mac";
   const hostOk = !startHost || (hosts.list.some((h) => h.host === startHost && h.enabled));
   const ready = !!provider && hostOk;
   // (A quoted message, from "Start agent about this", is named by its text, not its "> ".)
@@ -241,17 +276,16 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
   const finalName = cleanName(name) || derived;
   // A new frame beside this one does not take this frame's name.
   const derivedNew = nameFromRequest(line.replace(/^[ \t]*> ?/gm, "")) || "New agent";
-  const runsOn = startHost || (worker ? "an ephemeral worker" : runtime || "the board's agent machine");
+  const boardName = !boardId || boardId === "main" ? "Bunny board" : boardId;
+  const whereText = beside ? (placeNew ? `A new frame beside “${beside.name}”` : `In “${beside.name}”`) : where;
   return (
     <div className="bm-start-layer" data-mobile-ui data-testid="mobile-start-layer" style={{ top: vp.top, height: vp.height }}>
       <style>{BUNNY_CONTROLS_CSS}</style>
       <div className="bm-start-scrim" onPointerDown={() => !busy.current && onCancel()} />
-      <div className="bm-start-sheet" data-testid="mobile-start-sheet" role="dialog" aria-modal="true" aria-label="Start a new agent" onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape" && !busy.current) onCancel(); }}>
+      <div className="bm-start-sheet" data-testid="mobile-start-sheet" data-full={full} data-kb={vp.height < window.innerHeight - 120} role="dialog" aria-modal="true" aria-label="Start a new agent" onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape" && !busy.current) onCancel(); }}>
         <div className="bm-start-head">
           <span className="bm-grip-bar" aria-hidden="true" />
           <b>New agent</b>
-          {beside ? null : where ? <small data-testid="start-where">{where}</small> : null}
-          {prefill?.files?.length ? <small data-testid="start-photos">{prefill.files.length} screenshot{prefill.files.length === 1 ? "" : "s"} go into the frame</small> : null}
           {photoError ? <small role="alert" style={{ color: B.danger }}>{photoError}</small> : null}
         </div>
         <div className="bm-start-body" data-testid="start-form">
@@ -265,7 +299,11 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
               </button>
             </div>
           ) : null}
-          {beside ? <small data-testid="start-where" className="bm-start-runs">{placeNew ? `A new frame beside “${beside.name}”` : `In “${beside.name}”`}</small> : null}
+          <div className="bm-start-target" data-testid="start-target">
+            <span style={fieldLabel}>Adds to</span>
+            <b data-testid="start-board">{boardName}</b>
+            {whereText ? <small data-testid="start-where">{whereText}</small> : null}
+          </div>
           <label className="bm-start-field">
             <span style={fieldLabel}>Name</span>
             <input data-testid="start-name" className="bm-start-input" type="text" maxLength={80} enterKeyHint="next" autoComplete="off" placeholder={derived} aria-label="Agent name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -274,21 +312,42 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
             <span style={fieldLabel}>Model</span>
             <ModelSheet catalogue={catalogue} value={provider} onChange={setProvider} />
           </div>
-          <textarea data-testid="opening-line" className="bm-start-text" rows={3} aria-label="Opening message" placeholder="Opening message (optional)" value={line} onChange={(e) => setLine(e.target.value)} />
-          <div role="radiogroup" aria-label="Runs on" data-testid="start-runs-on" className="bm-start-seg bm-start-wrap">
-            <span data-testid="start-host-label" style={{display:"inline-flex",alignItems:"center",gap:4,flexBasis:"100%",whiteSpace:"nowrap"}}><span style={fieldLabel}>Runs on</span><button className="bm-start-refresh" type="button" aria-label="Refresh hosts" onClick={()=>setHostsTick(n=>n+1)}>↻</button></span>
-            <button type="button" role="radio" data-testid="start-host-scope" data-machine={machine ?? ""} aria-checked={!startHost && !cloud} data-on={!startHost && !cloud} title={runtime ? `The board's Paseo runtime on ${runtime}` : "The board's Paseo runtime (its machine name is not known yet)"} onClick={() => pick("runtime")}>
-              {runtimeText}
-            </button>
-            {hosts.list.map((h) => (
-              <button key={h.host} type="button" role="radio" data-testid={`start-host-${h.host}`} aria-checked={startHost === h.host} data-on={startHost === h.host} disabled={!h.enabled} title={h.reason || `Start on ${h.host}`} onClick={() => pick(h)}>
-                {h.host}
-              </button>
-            ))}
-            <button type="button" role="radio" data-testid="start-cloud" aria-checked={worker} data-on={worker} onClick={() => pick("worker")}>
-              ☁ Ephemeral worker
+          <div className="bm-start-message">
+            <textarea data-testid="opening-line" className="bm-start-text" rows={3} aria-label="Opening message" placeholder="Opening message (optional)" value={line} onChange={(e) => setLine(e.target.value)} onPaste={(e) => { const imgs = pastedImages(e); if (imgs.length) { e.preventDefault(); addPhotos(imgs); } }} />
+            <button type="button" className="bm-start-expand" data-testid="start-fullscreen" aria-pressed={full} aria-label={full ? "Close full screen message" : "Write the message full screen"} onClick={() => setFull((f) => !f)}>
+              {full ? <CollapseIcon /> : <ExpandIcon />}
             </button>
           </div>
+          {line.trim() ? null : <QuickStarts layout="row" onPick={(s) => setLine(s.prompt)} />}
+          <div className="bm-start-photos" data-testid="start-photos">
+            <PhotoTray photos={photos} previews={previews} setPhotos={setPhotos} disabled={pending} />
+            <input ref={picker} type="file" accept="image/*" multiple hidden data-testid="start-photo-input" onChange={(e) => { const picked = Array.from(e.target.files ?? []); e.target.value = ""; addPhotos(picked); }} />
+            {photos.length < MAX_PHOTOS ? (
+              <button type="button" className="bm-start-photo" data-testid="start-photo" disabled={pending} onClick={() => picker.current?.click()}>
+                <PhotoIcon /> {photos.length ? "Add more" : "Add screenshots"}
+              </button>
+            ) : null}
+          </div>
+          <div className="bm-start-field">
+            <span data-testid="start-host-label" className="bm-start-checks-head"><span style={fieldLabel} id={`m-runs-on-${frameId}`}>Runs on</span>{hosts.loading ? <small role="status" data-testid="start-hosts-checking">Checking machines…</small> : null}</span>
+            {/* One machine at a time: the same segmented choice as the desktop form, not checkboxes. */}
+            <div role="radiogroup" aria-labelledby={`m-runs-on-${frameId}`} aria-describedby={`m-start-identity-${frameId}`} data-testid="start-runs-on" className="bm-start-seg bm-start-wrap">
+              <button type="button" role="radio" data-testid="start-host-scope" data-machine={machine ?? ""} aria-checked={!startHost} data-on={!startHost} title={runtime ? `The board's Paseo runtime on ${runtime}` : "The board's Paseo runtime (its machine name is not known yet)"} onClick={() => pick("runtime")}>
+                {ephemeral ? "Upstash · ephemeral worker" : runtimeText}
+              </button>
+              {hosts.list.map((h) => (
+                <button key={h.host} type="button" role="radio" data-testid={`start-host-${h.host}`} aria-checked={startHost === h.host} data-on={startHost === h.host} disabled={!h.enabled} title={h.reason || `Run the agent on ${h.host}`} onClick={() => pick(h)}>
+                  {executionLabel(h.host)}
+                </button>
+              ))}
+            </div>
+          </div>
+          {!ephemeral && (
+            <button type="button" role="switch" data-testid="start-cloud" aria-checked={worker} className="bm-start-switch" title={`The agent runs on ${runtime || "the board's Mac"}; a cloud builder (Claude or Codex) writes the code.`} onClick={() => pick(worker ? "local" : "worker")}>
+              <span aria-hidden="true" className="bm-start-switch-track"><span className="bm-start-switch-thumb" /></span>
+              Cloud agent
+            </button>
+          )}
           {worker ? (
             <div role="radiogroup" aria-label="Cloud builder: who writes the code (not the Model above)" data-testid="start-cloud-provider" className="bm-start-seg bm-start-wrap">
               <span style={{...fieldLabel,flexBasis:"100%"}}>Cloud builder</span>
@@ -305,17 +364,21 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
               {codexReadiness.error || "Codex Cloud is not ready on the agent machine. Run cloud-task doctor --provider codex there for details."}
             </div>
           ) : null}
-          <div data-testid="start-identity" className="bm-start-runs">
-            Board: {infoNow()?.boardHostname || machine || "unknown"} · Agent runs on <b>{runsOn}</b>
+          {/* The selected machine already says where it runs; read out with the choice, not shown. */}
+          <div id={`m-start-identity-${frameId}`} data-testid="start-identity" className="bm-start-sr">
+            {ephemeral ? (startHost ? `The agent runs on ${executionLabel(startHost)}.` : "The agent runs on an ephemeral Upstash worker. Your selected subscription is used.") : runsOnSummary({ machine: startHost || runtime, boardHost: infoNow()?.boardHostname, cloudProvider: worker ? cloudProvider : null })}
           </div>
           {hosts.list.filter((h) => !h.enabled).map((h) => (
             <div key={h.host} data-testid="start-host-reason" className="bm-start-note">
               {h.host}: {h.reason}
             </div>
           ))}
-          {hosts.loading ? <div role="status" className="bm-start-note">Refreshing hosts…</div> : null}
           {hosts.note ? <div className="bm-start-note">{hosts.note}</div> : null}
-          {hosts.error ? <div role="alert" className="bm-start-note" style={{ color: B.danger }}>{hosts.error}</div> : null}
+          {hosts.error ? (
+            <div role="alert" data-testid="start-hosts-error" className="bm-start-note bm-start-alert">
+              <b>Other machines could not be listed.</b> {runtimeText} still works. The list tries again every 30 s, or close and reopen this sheet. If it keeps failing, check the fleet host is online. ({hosts.error})
+            </div>
+          ) : null}
         </div>
         <div className="bm-start-foot">
           <button type="button" data-testid="start-cancel" className="bm-start-cancel" disabled={pending} onClick={onCancel}>
@@ -329,3 +392,10 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
     </div>
   );
 }
+
+const ExpandIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
+);
+const CollapseIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /></svg>
+);

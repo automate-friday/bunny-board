@@ -36,13 +36,13 @@ function Message({ m, onThread }: { m: SlackMsg; onThread?: () => void }) {
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
           <b style={{ fontSize: 12.5 }}>{m.userName}</b>
-          {m.bot ? <span style={{ fontSize: 9, background: "#e8eaed", borderRadius: 3, padding: "0 3px" }}>APP</span> : null}
-          <span style={{ color: "#889", fontSize: 10.5 }}>{time(m.ts)}</span>
+          {m.bot ? <span style={{ fontSize: 9, background: "light-dark(#e8eaed, var(--bunny-raised))", borderRadius: 3, padding: "0 3px" }}>APP</span> : null}
+          <span style={{ color: "light-dark(#889, var(--bunny-muted))", fontSize: 10.5 }}>{time(m.ts)}</span>
         </div>
-        {m.broadcast ? <div style={{ color: "#889", fontSize: 10.5 }}>replied to a thread</div> : null}
+        {m.broadcast ? <div style={{ color: "light-dark(#889, var(--bunny-muted))", fontSize: 10.5 }}>replied to a thread</div> : null}
         <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.35 }}>{m.text}</div>
         {m.reply_count && onThread ? (
-          <button type="button" data-testid="slack-open-thread" onClick={onThread} style={{ marginTop: 2, border: "none", background: "transparent", color: "#1264a3", fontWeight: 600, padding: 0, cursor: "pointer", font: "inherit", fontSize: 11.5 }}>
+          <button type="button" data-testid="slack-open-thread" onClick={onThread} style={{ marginTop: 2, border: "none", background: "transparent", color: "light-dark(#1264a3, hsl(206 80% 74%))", fontWeight: 600, padding: 0, cursor: "pointer", font: "inherit", fontSize: 11.5 }}>
             {m.reply_count} {m.reply_count === 1 ? "reply" : "replies"}
           </button>
         ) : null}
@@ -74,9 +74,9 @@ function Composer({ widgetKey, placeholder }: { widgetKey: string; placeholder: 
         e.preventDefault();
         void send();
       }}
-      style={{ display: "flex", gap: 6, padding: 8, borderTop: "1px solid #eef0f3" }}
+      style={{ display: "flex", gap: 6, padding: 8, borderTop: "1px solid light-dark(#eef0f3, var(--bunny-line))" }}
     >
-      <input data-testid="slack-composer" value={text} onChange={(e) => setText(e.target.value)} placeholder={error ? `Not sent: ${error}` : placeholder} style={{ flex: 1, minWidth: 0, padding: "5px 8px", border: `1px solid ${error ? "#d93025" : "#c9ced6"}`, borderRadius: 6, font: "12px system-ui" }} />
+      <input data-testid="slack-composer" value={text} onChange={(e) => setText(e.target.value)} placeholder={error ? `Not sent: ${error}` : placeholder} style={{ flex: 1, minWidth: 0, padding: "5px 8px", border: `1px solid ${error ? "light-dark(#d93025, hsl(4 35% 39%))" : "light-dark(#c9ced6, var(--bunny-line))"}`, borderRadius: 6, font: "12px system-ui" }} />
       <button type="submit" disabled={busy || !text.trim()} style={{ border: "none", background: "#007a5a", color: "#fff", borderRadius: 6, padding: "0 10px", cursor: "pointer" }}>
         Send
       </button>
@@ -91,10 +91,10 @@ function MockControls() {
     api("/api/ui/widgets/slack/admin", { method: "POST", body: JSON.stringify(body) })
       .then(() => setNote(`${label} sent`))
       .catch((e) => setNote((e as Error).message));
-  const btn: React.CSSProperties = { border: "1px solid #d5d9e0", background: "#fff", borderRadius: 5, padding: "1px 6px", cursor: "pointer", font: "11px system-ui" };
+  const btn: React.CSSProperties = { border: "1px solid light-dark(#d5d9e0, var(--bunny-line))", background: "light-dark(#fff, var(--bunny-surface))", borderRadius: 5, padding: "1px 6px", cursor: "pointer", font: "11px system-ui" };
   return (
-    <div style={{ borderTop: "1px dashed #e1e4ea", padding: "3px 8px", color: "#778", fontSize: 11, display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
-      <button type="button" data-testid="slack-mock-toggle" onClick={() => setOpen((v) => !v)} style={{ ...btn, border: "none", padding: 0, display: "inline-flex", alignItems: "center", gap: 2, color: "#778" }}>
+    <div style={{ borderTop: "1px dashed light-dark(#e1e4ea, var(--bunny-line))", padding: "3px 8px", color: "light-dark(#778, var(--bunny-muted))", fontSize: 11, display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
+      <button type="button" data-testid="slack-mock-toggle" onClick={() => setOpen((v) => !v)} style={{ ...btn, border: "none", padding: 0, display: "inline-flex", alignItems: "center", gap: 2, color: "light-dark(#778, var(--bunny-muted))" }}>
         <WidgetIcon name={open ? "chevron-down" : "chevron-right"} size={12} />
         Mock controls
       </button>
@@ -131,7 +131,7 @@ export function SlackBody({ config, state, widgetKey, readOnly, setConfig }: Wid
   if (!data && state?.status === "error")
     return (
       <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-        <div data-testid="slack-error" style={{ margin: 12, padding: 10, borderRadius: 8, background: "#fdecea", color: "#8c1d18" }}>
+        <div data-testid="slack-error" style={{ margin: 12, padding: 10, borderRadius: 8, background: "light-dark(#fdecea, var(--bunny-raised))", color: "light-dark(#8c1d18, hsl(3 71% 74%))" }}>
           <b>{state.reason}</b>
           <div style={{ marginTop: 4 }}>{HINTS[code] ?? "The Slack API refused this view."}</div>
         </div>
@@ -139,15 +139,15 @@ export function SlackBody({ config, state, widgetKey, readOnly, setConfig }: Wid
         {mock ? <MockControls /> : null}
       </div>
     );
-  if (!data) return <div style={{ padding: 12, color: "#778" }}>Loading from Slack…</div>;
+  if (!data) return <div style={{ padding: 12, color: "light-dark(#778, var(--bunny-muted))" }}>Loading from Slack…</div>;
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       {data.view === "thread" ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderBottom: "1px solid #eef0f3", background: "#fbfbfc" }}>
-          <button type="button" data-testid="slack-back" disabled={readOnly} onClick={() => setConfig({ thread_ts: "" })} style={{ border: "none", background: "transparent", color: "#1264a3", cursor: "pointer", padding: 0, font: "inherit", fontWeight: 600 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderBottom: "1px solid light-dark(#eef0f3, var(--bunny-line))", background: "light-dark(#fbfbfc, var(--bunny-surface))" }}>
+          <button type="button" data-testid="slack-back" disabled={readOnly} onClick={() => setConfig({ thread_ts: "" })} style={{ border: "none", background: "transparent", color: "light-dark(#1264a3, hsl(206 80% 74%))", cursor: "pointer", padding: 0, font: "inherit", fontWeight: 600 }}>
             ‹ #{data.channel.name}
           </button>
-          <span style={{ color: "#889" }}>Thread</span>
+          <span style={{ color: "light-dark(#889, var(--bunny-muted))" }}>Thread</span>
         </div>
       ) : null}
       <div
@@ -168,17 +168,17 @@ export function SlackBody({ config, state, widgetKey, readOnly, setConfig }: Wid
               data-testid="slack-channel"
               disabled={readOnly || !c.is_member}
               onClick={() => setConfig({ channel: c.id })}
-              style={{ display: "flex", width: "100%", gap: 6, padding: "6px 12px", border: "none", background: "transparent", textAlign: "left", cursor: c.is_member ? "pointer" : "default", color: c.is_member ? "#223" : "#99a", font: "13px system-ui" }}
+              style={{ display: "flex", width: "100%", gap: 6, padding: "6px 12px", border: "none", background: "transparent", textAlign: "left", cursor: c.is_member ? "pointer" : "default", color: c.is_member ? "light-dark(#223, var(--bunny-ink))" : "light-dark(#99a, var(--bunny-muted))", font: "13px system-ui" }}
             >
               <span style={{ display: "inline-flex", width: 14, justifyContent: "center", alignItems: "center" }}>{c.is_private ? <WidgetIcon name="lock" size={13} title="private" /> : "#"}</span>
               <span style={{ flex: 1 }}>{c.name}</span>
-              <span style={{ color: "#99a", fontSize: 11 }}>{c.is_member ? `${c.num_members ?? ""} members` : "bot not in channel"}</span>
+              <span style={{ color: "light-dark(#99a, var(--bunny-muted))", fontSize: 11 }}>{c.is_member ? `${c.num_members ?? ""} members` : "bot not in channel"}</span>
             </button>
           ))
         ) : data.view === "thread" ? (
           <>
             {data.parent ? <Message m={data.parent} /> : null}
-            <div style={{ margin: "2px 10px 4px", color: "#889", fontSize: 11, borderBottom: "1px solid #eef0f3" }}>{data.messages.length} replies</div>
+            <div style={{ margin: "2px 10px 4px", color: "light-dark(#889, var(--bunny-muted))", fontSize: 11, borderBottom: "1px solid light-dark(#eef0f3, var(--bunny-line))" }}>{data.messages.length} replies</div>
             {data.messages.map((m) => (
               <Message key={m.ts} m={m} />
             ))}

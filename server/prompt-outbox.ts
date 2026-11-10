@@ -28,6 +28,7 @@ export interface PromptIntent {
 // (reason host-ack), or an old acceptance the timeline cannot place (unverified).
 // A queued receipt's reason says what it waits for: waiting-host (Paseo unreachable),
 // waiting-turn (busy agent whose provider cannot steer), or a retry after an error.
+// waiting-start: the agent's start (often a remote start) has not finished yet.
 export interface PromptReceipt extends PromptIntent {
   status: 'queued' | 'sending' | 'accepted' | 'delivered' | 'failed' | 'unknown';
   attempts: number;
@@ -101,6 +102,9 @@ export class PromptOutbox {
   // and its provider cannot take a message mid-turn without cancelling the turn), or null.
   // Held sends keep their place; later sends to that agent wait behind them.
   hold:((r:PromptReceipt,signal:AbortSignal)=>Promise<{wait:string|null;mode?:string}>)|null=null;
+  // The agent's start is still pending (server/core.ts): "agent not found" then means
+  // "not created yet", so the send waits (waiting-start) instead of failing as missing.
+  startPending:((r:PromptIntent)=>boolean)|null=null;
   // Set by the board (server/core.ts): drains wait for start(). Unit rigs drain directly.
   requireStart=false;
   reconcile(){for(const r of this.records.values())this.onChange?.({...r});}
@@ -147,6 +151,18 @@ export class PromptOutbox {
   // Chat replies on this board that have not gone out yet (the reconnect banner counts them).
   pendingOn(boardId:string):number {
     let n=0;for(const r of this.records.values())if(r.boardId===boardId&&(r.kind??'prompt')==='prompt'&&(r.status==='queued'||r.status==='sending'))n++;return n;
+  }
+  // The person took a queued reply back (to correct it, or drop it) before it went out.
+  // Only a send that never reached the wire can be withdrawn: once a send has been tried,
+  // the daemon may hold it, so it is left to deliver (409). A withdrawn receipt ends as
+  // failed/withdrawn; later replies that named it as prev no longer wait for it.
+  withdraw(agentId:string,messageId:string):PromptReceipt {
+    const r=this.records.get(key(agentId,messageId));if(!r)throw fail('Prompt receipt not found',404);
+    if(r.status==='failed'&&r.reason==='withdrawn')return {...r};
+    if(r.status!=='queued'||r.attempts>0||(r.kind??'prompt')!=='prompt')throw fail(r.status==='delivered'?'Already delivered to the agent':'Already on its way to the agent; it can no longer be taken back',409);
+    r.status='failed';r.reason='withdrawn';r.retryAt=0;this.save(r);
+    this.log(`prompt-delivery ${JSON.stringify({agent:r.agentId.slice(0,8),kind:'prompt',attempts:0,withdrawn:true})}`);
+    return {...r};
   }
   get(agentId:string,messageId:string):PromptReceipt {
     const r=this.records.get(key(agentId,messageId));if(!r)throw fail('Prompt receipt not found',404);return {...r};
@@ -228,8 +244,10 @@ export class PromptOutbox {
         try{decision=await this.hold(r,this.abort.signal);}catch{decision={wait:r.host?'waiting-status':'waiting-host'};}
         if(this.stopped)return;
         if(decision.mode&&decision.mode!==r.mode){r.mode=decision.mode;if(!decision.wait)this.saveQuiet(r);}
-        if(decision.wait){this.waiting(r,decision.wait);r.retryAt=this.now()+2000;blocked.add(r.agentId);continue;}
+        if(decision.wait){if(statusOf(r)!=='queued')continue;this.waiting(r,decision.wait);r.retryAt=this.now()+2000;blocked.add(r.agentId);continue;}
       }
+      // Withdrawn while the hold check ran: never send it.
+      if(statusOf(r)!=='queued')continue;
       await this.send(r);
       // Preserve per-agent ordering while a send is retrying or uncertain.
       if(statusOf(r)!=='accepted'&&statusOf(r)!=='delivered')blocked.add(r.agentId);
@@ -240,9 +258,9 @@ export class PromptOutbox {
   private waiting(r:PromptReceipt,reason:string){if(r.reason!==reason){r.reason=reason;this.save(r);}}
   private async send(r:PromptReceipt) {
     const wire=wireIdsOf(r).at(-1)!;
-    if(this.stopped||statusOf(r)==='delivered')return;
+    if(this.stopped||statusOf(r)==='delivered'||statusOf(r)==='failed')return;
     if(!r.attempts)hostMetrics(this.log).record(r.host??'local','prompt-queue-wait',this.now()-r.createdAt);
-    if(r.reason==='waiting-turn'||r.reason==='waiting-host'||r.reason==='waiting-earlier'||r.reason==='waiting-status')delete r.reason;
+    if(r.reason==='waiting-turn'||r.reason==='waiting-host'||r.reason==='waiting-earlier'||r.reason==='waiting-status'||r.reason==='waiting-start')delete r.reason;
     r.status='sending';r.attempts++;r.sentAt=this.now();this.save(r);
     const finish=hostOperation(this.log,r.host??'local','queued-prompt');
     try {
@@ -265,6 +283,9 @@ export class PromptOutbox {
         // The daemon will never settle this wire id (its earlier send died midway), or
         // retries ran out: it may still have landed, so the timeline decides.
         r.status='unknown';if(/agent_request_outcome_unknown/.test(message))r.reason='outcome-unknown';r.retryAt=this.now()+backoff(r.attempts);
+      }else if(r.reason==='missing'&&r.attempts<=1&&this.startPending?.(r)){
+        // Not created on the host yet: nothing was delivered, so it waits for the start.
+        r.status='queued';r.attempts=0;r.reason='waiting-start';r.retryAt=this.now()+backoff(0);
       }else if(transientDaemonError(error)){
         // Lost acknowledgement, timeout or reconnect: the daemon deduplicates a resend
         // under the same wire id, and joins one still in flight.

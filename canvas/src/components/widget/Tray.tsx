@@ -44,23 +44,23 @@ export function WidgetTrayButton() {
             <div
               data-testid="widget-tray"
               onPointerDown={(e) => e.stopPropagation()}
-              style={{ opacity: dragging ? 0 : 1, pointerEvents: dragging ? "none" : undefined, transition: "opacity 120ms", position: "fixed", left: "50%", bottom: 76, transform: "translateX(-50%)", zIndex: 400, width: "min(340px, calc(100vw - 32px))", maxHeight: "calc(100vh - 120px)", overflowY: "auto", background: "#f6f7f9", border: "1px solid #dde1e7", borderRadius: 14, boxShadow: "0 10px 30px rgba(20,30,60,.18)", padding: 10, display: "flex", flexDirection: "column", gap: 8, font: "12px system-ui" }}
+              style={{ opacity: dragging ? 0 : 1, pointerEvents: dragging ? "none" : undefined, transition: "opacity 120ms", position: "fixed", left: "50%", bottom: 76, transform: "translateX(-50%)", zIndex: 400, width: "min(340px, calc(100vw - 32px))", maxHeight: "calc(100vh - 120px)", overflowY: "auto", background: "light-dark(#f6f7f9, var(--bunny-surface))", border: "1px solid light-dark(#dde1e7, var(--bunny-line))", borderRadius: 14, boxShadow: "0 10px 30px rgba(20,30,60,.18)", padding: 10, display: "flex", flexDirection: "column", gap: 8, font: "12px system-ui" }}
             >
               <div style={{ display: "flex", alignItems: "center" }}>
                 <b style={{ flex: 1, fontSize: 13 }}>Widgets</b>
-                <button type="button" aria-label="Close widgets" onClick={() => setOpen(false)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "#556", display: "inline-flex", padding: 2 }}>
+                <button type="button" aria-label="Close widgets" onClick={() => setOpen(false)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "light-dark(#556, var(--bunny-muted))", display: "inline-flex", padding: 2 }}>
                   <WidgetIcon name="close" size={16} />
                 </button>
               </div>
-              <div style={{ color: "#667" }}>Drag one onto the board, then set it up. Agents can add them too (board_widget).</div>
-              {installed === null ? <div style={{ color: "#889" }}>Loading your plugins…</div> : null}
-              {installed !== null && !widgets.length && !apps.length ? <div data-testid="tray-empty" style={{ color: "#667" }}>Nothing installed yet.</div> : null}
+              <div style={{ color: "light-dark(#667, var(--bunny-muted))" }}>Drag one onto the board, then set it up. Agents can add them too (board_widget).</div>
+              {installed === null ? <div style={{ color: "light-dark(#889, var(--bunny-muted))" }}>Loading your plugins…</div> : null}
+              {installed !== null && !widgets.length && !apps.length ? <div data-testid="tray-empty" style={{ color: "light-dark(#667, var(--bunny-muted))" }}>Nothing installed yet.</div> : null}
               {widgets.map((m) => (
                 <WidgetDragSource key={m.id} editor={editor} manifest={m} onDragging={() => setTimeout(() => setDragging(true), 0)} onPlaced={placed} />
               ))}
               {appManifest && apps.length ? (
                 <div data-testid="tray-app-catalog" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <div style={{ color: "#556", fontWeight: 600 }}>Apps <span style={{ fontWeight: 400, color: "#889" }}>· ready-made app windows</span></div>
+                  <div style={{ color: "light-dark(#556, var(--bunny-muted))", fontWeight: 600 }}>Apps <span style={{ fontWeight: 400, color: "light-dark(#889, var(--bunny-muted))" }}>· ready-made app windows</span></div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
                     {apps.map((p) => (
                       <WidgetDragSource key={p.id} editor={editor} manifest={appManifest} preset={p} onDragging={() => setTimeout(() => setDragging(true), 0)} onPlaced={placed} />
@@ -71,7 +71,7 @@ export function WidgetTrayButton() {
               <a
                 href={pluginsHref()}
                 data-testid="tray-browse-plugins"
-                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 10px", border: "1px dashed #c9ced6", borderRadius: 10, color: "#2d3442", textDecoration: "none", fontWeight: 600, fontSize: 12.5, background: "#fff" }}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 10px", border: "1px dashed light-dark(#c9ced6, var(--bunny-line))", borderRadius: 10, color: "light-dark(#2d3442, var(--bunny-ink))", textDecoration: "none", fontWeight: 600, fontSize: 12.5, background: "light-dark(#fff, var(--bunny-surface))" }}
               >
                 <WidgetIcon name="widgets" size={16} /> Browse plugins
               </a>

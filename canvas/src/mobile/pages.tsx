@@ -19,24 +19,32 @@ export function pageTiles<T extends { pageId: string }>(frames: readonly T[], pa
   return page ? frames.filter((f) => f.pageId === page) : [...frames];
 }
 
-export function PageMenu({ pages, frames, current, pick }: { pages: PageItem[]; frames: readonly { pageId: string }[]; current: string | null; pick: (page: string | null) => void }) {
+// `add`: "+ New page" at the end (the phone's way to start a separate space for a new project).
+export function PageMenu({ pages, frames, current, pick, add }: { pages: PageItem[]; frames: readonly { pageId: string }[]; current: string | null; pick: (page: string | null) => void; add?: () => void }) {
   const count = (id: string | null) => pageTiles(frames, id).length;
   return (
     <div className="bm-pages" data-testid="mobile-pages" role="group" aria-label="Pages">
       {pages.map((p) => (
-        <button key={p.id} type="button" role="menuitemradio" aria-checked={current === p.id} data-testid="mobile-page" data-page-id={p.id} onClick={() => pick(p.id)}>
+        <button key={p.id} type="button" role="menuitemradio" aria-checked={current === p.id || pages.length === 1} data-testid="mobile-page" data-page-id={p.id} onClick={() => pick(p.id)}>
           <span>{p.name}</span>
           <small>
             {count(p.id)} frame{count(p.id) === 1 ? "" : "s"}
           </small>
         </button>
       ))}
-      <button type="button" role="menuitemradio" aria-checked={current === null} data-testid="mobile-page-all" onClick={() => pick(null)}>
-        <span>All pages</span>
-        <small>
-          {count(null)} frame{count(null) === 1 ? "" : "s"}
-        </small>
-      </button>
+      {pages.length > 1 ? (
+        <button type="button" role="menuitemradio" aria-checked={current === null} data-testid="mobile-page-all" onClick={() => pick(null)}>
+          <span>All pages</span>
+          <small>
+            {count(null)} frame{count(null) === 1 ? "" : "s"}
+          </small>
+        </button>
+      ) : null}
+      {add ? (
+        <button type="button" role="menuitem" className="bm-page-new" data-testid="mobile-page-new" onClick={add}>
+          <span>+ New page</span>
+        </button>
+      ) : null}
     </div>
   );
 }

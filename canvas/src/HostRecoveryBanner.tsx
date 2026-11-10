@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { type Computed, computed, type Editor, useValue } from "tldraw";
 import { api } from "./api";
 
+const BANNER_GRACE_MS = 4000;
 interface Health { state: string; message: string; queueing: boolean; retryAfterMs: number }
 interface Queue { deltas: number; frames: number; intros: number; replies?: number }
 async function hostHealth(signal: AbortSignal): Promise<{ health: Health; fallback: boolean }> {
@@ -63,15 +64,28 @@ export function HostRecoveryBanner({ boardId, editor }: { boardId: string; edito
     return () => { alive = false; controller.abort(); clearTimeout(timer); };
   }, [boardId]);
   if (!state.health?.queueing && !state.error) return null;
+  // A blip that clears within the grace period never shows: most failed checks recover on the next poll.
+  if (observedAt === null || now - observedAt < BANNER_GRACE_MS) return null;
   const replies = Number.isFinite(state.queue?.replies) ? state.queue!.replies! : 0;
   const queued = state.queue ? state.queue.deltas + state.queue.intros + replies + binds : null;
-  return <div role="status" aria-live="polite" data-testid="host-recovery-banner" data-fallback={state.fallback ? "1" : "0"} style={{ flexShrink: 0, background: "#fff1c8", color: "#593a00", borderBottom: "1px solid #d2a34a", padding: "7px 12px", font: "13px system-ui", overflowWrap: "anywhere" }}>
-    <strong>{state.health?.queueing ? `Paseo host reconnecting, ${queued === null ? "queue count unavailable" : `${queued} queued`}` : "Paseo host status unavailable"}</strong>
-    <span data-testid="host-observed-state"> {state.health ? `${state.health.state}: ${state.health.message}` : "No health result yet."}{observedAt !== null ? ` · observed ${Math.max(0, Math.floor((now - observedAt) / 1000))}s` : ""}</span>
-    <span> · Start and Link remain available. Requests wait for recovery.</span>
-    {state.queue ? <span style={{ fontSize: 11 }}> {replies} replies, {state.queue.deltas} edits, {state.queue.intros} introductions, {binds} bind requests on this board.</span> : null}
-    {state.fallback ? <span style={{ fontSize: 11 }}> Legacy availability fallback; transport state unavailable.</span> : null}
-    {state.error ? <span role="alert"> Status check failed: {state.error}. Last known state shown.</span> : null}
-    {state.queueError ? <span> Queue count could not be refreshed.</span> : null}
-  </div>;
+  const headline = state.health?.queueing ? "Reconnecting…" : "Connection check delayed";
+  const sub = state.health?.queueing ? (queued ? `${queued} change${queued === 1 ? "" : "s"} saved, will send` : "Your changes are saved") : null;
+  // Floats over the board at a fixed height so nothing below it moves (no layout shift).
+  // The one-line summary is all most people need; diagnostics stay one click away.
+  return <details role="status" aria-live="polite" data-testid="host-recovery-banner" data-fallback={state.fallback ? "1" : "0"} style={{ position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", zIndex: 400, maxWidth: "min(520px, calc(100vw - 24px))", font: "13px system-ui", color: "light-dark(#593a00, hsl(39 88% 74%))" }}>
+    <summary style={{ height: 32, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 8, padding: "0 12px", borderRadius: 16, background: "light-dark(#fff6dc, hsl(45 45% 21%))", border: "1px solid light-dark(#e6c67a, hsl(39 35% 39%))", boxShadow: "0 2px 8px light-dark(#0000001a, #0006)", cursor: "pointer", listStyle: "none", whiteSpace: "nowrap" }}>
+      <span aria-hidden style={{ width: 8, height: 8, borderRadius: 4, background: "light-dark(#d08a00, hsl(39 88% 60%))", flexShrink: 0 }} />
+      <strong style={{ fontWeight: 600 }}>{headline}</strong>
+      {sub ? <span style={{ opacity: 0.8, overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</span> : null}
+      <span style={{ opacity: 0.6, fontSize: 12 }}>Details</span>
+    </summary>
+    <div style={{ marginTop: 6, padding: "8px 12px", borderRadius: 8, background: "light-dark(#fffdf6, hsl(45 30% 16%))", border: "1px solid light-dark(#e6c67a, hsl(39 35% 39%))", fontSize: 12, lineHeight: 1.45, overflowWrap: "anywhere" }}>
+      <div data-testid="host-observed-state">{state.health ? `${state.health.state}: ${state.health.message}` : "No health result yet."}{` · ${Math.max(0, Math.floor((now - observedAt) / 1000))}s`}</div>
+      <div>Starting and linking still work. Requests send once the host is back.</div>
+      {state.queue ? <div>{replies} replies, {state.queue.deltas} edits, {state.queue.intros} introductions, {binds} bind requests waiting.</div> : null}
+      {state.fallback ? <div>Legacy availability fallback; transport state unavailable.</div> : null}
+      {state.error ? <div role="alert">Status check failed: {state.error}. Last known state shown.</div> : null}
+      {state.queueError ? <div>Queue count could not be refreshed.</div> : null}
+    </div>
+  </details>;
 }

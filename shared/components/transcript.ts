@@ -156,7 +156,7 @@ export interface TranscriptSnapshot {
   error?: string;
   updatedAt: number;
   // An agent on another machine, read with af-network every 20 s (not live).
-  remote?: { host: string; polledAt: number | null; coverage?: "messages-only"; stale?: boolean; staleAfterMs?: number };
+  remote?: { host: string; polledAt: number | null; coverage?: "messages-only" | "projected-timeline"; stale?: boolean; staleAfterMs?: number };
   // Local agents only: last usage and the running turn (agent snapshot lastUsage, activeTurn).
   usage?: TranscriptUsage;
   activeTurn?: { turnId: string; startedAt: string | number } | null;

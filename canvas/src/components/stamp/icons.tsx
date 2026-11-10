@@ -69,9 +69,9 @@ export function StampIcon({ name, size = 16, strokeWidth = 2, title }: { name: s
 }
 
 export const STATE_ICON: Record<string, { icon: string; color: string }> = {
-  sent: { icon: "send", color: "#8a929c" },
-  seen: { icon: "eye", color: "#2f6fe0" },
-  acting: { icon: "bolt", color: "#d98a00" },
-  done: { icon: "done", color: "#1f9d55" },
-  failed: { icon: "alert", color: "#d93025" },
+  sent: { icon: "send", color: "light-dark(#8a929c, var(--bunny-muted))" },
+  seen: { icon: "eye", color: "light-dark(#2f6fe0, hsl(218 74% 74%))" },
+  acting: { icon: "bolt", color: "light-dark(#d98a00, hsl(38 88% 74%))" },
+  done: { icon: "done", color: "light-dark(#1f9d55, hsl(146 67% 74%))" },
+  failed: { icon: "alert", color: "light-dark(#d93025, hsl(4 71% 74%))" },
 };

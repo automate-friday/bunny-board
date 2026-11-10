@@ -56,7 +56,7 @@ export class PhoneTextShapeUtil extends TextShapeUtil {
   override component(shape: TLTextShape) {
     return phoneLod(shape, true, () => {
       const b = this.editor.getShapeGeometry(shape).bounds;
-      return createElement(BlockPlaceholder, { w: b.w, h: b.h, fill: "rgba(29,29,29,.18)" });
+      return createElement(BlockPlaceholder, { w: b.w, h: b.h, fill: "light-dark(rgba(29,29,29,.18), rgba(237,240,247,.22))" });
     }, () => super.component(shape));
   }
 }

@@ -1,3 +1,4 @@
+import { AppIcon } from "../components/AppIcon";
 // Phone: "View full board" from a focused frame. A small, low-emphasis map button in the top
 // bar (the quick-switch strip stays the main way between frames) animates out to the board
 // view, the Maps-style overview where a tap on a frame opens it. The frame you came from
@@ -13,10 +14,7 @@ import "./boardFocus.css";
 export function FullBoardButton({ onClick }: { onClick: () => void }) {
   return (
     <button type="button" className="bm-fullboard" data-testid="mobile-full-board" aria-label="View the full board" title="View the full board" onClick={onClick}>
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M3.5 6.5l5.5-2 6 2 5.5-2v13l-5.5 2-6-2-5.5 2z" />
-        <path d="M9 4.5v13M15 6.5v13" />
-      </svg>
+      <AppIcon name="map" size={22} />
     </button>
   );
 }

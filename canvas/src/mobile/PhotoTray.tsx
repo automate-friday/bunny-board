@@ -1,3 +1,4 @@
+import { AppIcon } from "../components/AppIcon";
 // The phone composer's photos: a row of numbered thumbnails, sent in the row's order.
 // Reorder by long-pressing a photo and dragging it along the row, or tap one and use
 // ← Earlier / Later →; × removes one. The add-photo button is a line icon matching the
@@ -71,7 +72,7 @@ export function PhotoTray({ photos, previews, setPhotos, disabled }: { photos: F
               touchAction: "pan-x",
               WebkitTouchCallout: "none",
               userSelect: "none",
-              outline: selected === i ? "2px solid #8875F6" : "none",
+              outline: selected === i ? "2px solid light-dark(#8875F6, hsl(249 35% 39%))" : "none",
               outlineOffset: 2,
               transform: dragging === i ? "scale(1.08)" : undefined,
               boxShadow: dragging === i ? "0 8px 20px rgba(46,31,22,.3)" : undefined,
@@ -135,7 +136,7 @@ export function PhotoTray({ photos, previews, setPhotos, disabled }: { photos: F
               }}
               style={{ display: "block", position: "relative", padding: 0, border: 0, background: "transparent", borderRadius: 10, cursor: "grab", touchAction: "pan-x", WebkitTouchCallout: "none" } as React.CSSProperties}
             >
-              <img src={previews[i]} alt={f.name} draggable={false} style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 10, border: "1px solid #e2e8f0", display: "block", pointerEvents: "none" }} />
+              <img src={previews[i]} alt={f.name} draggable={false} style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 10, border: "1px solid light-dark(#e2e8f0, var(--bunny-line))", display: "block", pointerEvents: "none" }} />
               <span aria-hidden="true" data-testid="reply-photo-order" style={{ position: "absolute", left: 4, bottom: 4, minWidth: 18, height: 18, borderRadius: 9, background: "rgba(15,23,42,.75)", color: "#fff", font: "600 11px/18px system-ui", textAlign: "center", padding: "0 4px", boxSizing: "border-box" }}>
                 {i + 1}
               </span>
@@ -154,7 +155,7 @@ export function PhotoTray({ photos, previews, setPhotos, disabled }: { photos: F
         ))}
       </div>
       {selected !== null && selected < photos.length && photos.length > 1 ? (
-        <div data-testid="reply-photo-move" style={{ display: "flex", gap: 8, alignItems: "center", minHeight: 44, font: "12px Inter, system-ui, sans-serif", color: "#64748b" }}>
+        <div data-testid="reply-photo-move" style={{ display: "flex", gap: 8, alignItems: "center", minHeight: 44, font: "12px Inter, system-ui, sans-serif", color: "light-dark(#64748b, var(--bunny-muted))" }}>
           <button type="button" data-testid="reply-photo-left" aria-label={`Move photo ${selected + 1} earlier`} disabled={selected === 0} onClick={() => setSelected(move(selected, selected - 1))} style={moveBtn(selected === 0)}>
             ← Earlier
           </button>
@@ -165,21 +166,15 @@ export function PhotoTray({ photos, previews, setPhotos, disabled }: { photos: F
         </div>
       ) : photos.length > 1 ? (
         // Same height as the move buttons, so tapping a photo never shifts the row under the finger.
-        <div style={{ display: "flex", alignItems: "center", minHeight: 44, font: "11px Inter, system-ui, sans-serif", color: "#64748b" }}>Sent in this order · long-press and drag, or tap a photo, to move it</div>
+        <div style={{ display: "flex", alignItems: "center", minHeight: 44, font: "11px Inter, system-ui, sans-serif", color: "light-dark(#64748b, var(--bunny-muted))" }}>Sent in this order · long-press and drag, or tap a photo, to move it</div>
       ) : null}
     </div>
   );
 }
 
-const moveBtn = (off: boolean): React.CSSProperties => ({ minHeight: 44, minWidth: 92, borderRadius: 12, border: "1px solid #cbd5e1", background: "#fff", color: off ? "#94a3b8" : "#0f172a", font: "600 13px Inter, system-ui, sans-serif", cursor: off ? "default" : "pointer" });
+const moveBtn = (off: boolean): React.CSSProperties => ({ minHeight: 44, minWidth: 92, borderRadius: 12, border: "1px solid light-dark(#cbd5e1, hsl(213 35% 39%))", background: "light-dark(#fff, var(--bunny-surface))", color: off ? "light-dark(#94a3b8, var(--bunny-muted))" : "light-dark(#0f172a, hsl(222 50% 74%))", font: "600 13px Inter, system-ui, sans-serif", cursor: off ? "default" : "pointer" });
 
 // Add a photo: a picture-frame line icon in the thumb bar's style.
 export function PhotoIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" style={{ width: 24, height: 24, fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", strokeLinejoin: "round", display: "block" }}>
-      <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
-      <circle cx="9" cy="10" r="1.6" />
-      <path d="M4 17l5-4.5 3.5 3 3-2.5 4.5 4" />
-    </svg>
-  );
+  return <AppIcon name="image" size={24} />;
 }

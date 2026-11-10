@@ -46,7 +46,7 @@ export function useQueued(editor: Editor): { deltas: number; frames: number } {
   }, [key]);
 }
 
-const base: React.CSSProperties = { borderRadius: 8, border: "1px solid #bbb", background: "#fff", color: "#222", cursor: "pointer", font: "inherit", whiteSpace: "nowrap" };
+const base: React.CSSProperties = { borderRadius: 8, border: "1px solid light-dark(#bbb, var(--bunny-line))", background: "light-dark(#fff, var(--bunny-surface))", color: "light-dark(#222, var(--bunny-ink))", cursor: "pointer", font: "inherit", whiteSpace: "nowrap" };
 
 export function BoardControls({ editor, boardId, onImport, toast, big = false }: { editor: Editor; boardId: string; onImport: () => void; toast: (t: string) => void; big?: boolean }) {
   const locks = useValue("paseo-locks", () => boardLocks(editor).get(), [editor]);

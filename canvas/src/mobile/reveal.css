@@ -1,6 +1,6 @@
 /* "Where is it on the board" (Reveal.tsx): a pulse on the frame and a label, over the canvas. */
 .bm-reveal { position: absolute; inset: 0; z-index: 385; pointer-events: none; }
-.bm-reveal-pulse { position: absolute; box-sizing: border-box; border: 3px solid #8875F6; border-radius: 6px; box-shadow: 0 0 0 0 rgba(136,117,246,.55); animation: bm-reveal-pulse 1s ease-out infinite; pointer-events: none; }
+.bm-reveal-pulse { position: absolute; box-sizing: border-box; border: 3px solid light-dark(#8875F6, hsl(249 35% 39%)); border-radius: 6px; box-shadow: 0 0 0 0 rgba(136,117,246,.55); animation: bm-reveal-pulse 1s ease-out infinite; pointer-events: none; }
 @keyframes bm-reveal-pulse { 0% { box-shadow: 0 0 0 0 rgba(136,117,246,.55); } 100% { box-shadow: 0 0 0 22px rgba(136,117,246,0); } }
 .bm-reveal-label {
   position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 28px); transform: translateX(-50%); max-width: calc(100vw - 32px); box-sizing: border-box;

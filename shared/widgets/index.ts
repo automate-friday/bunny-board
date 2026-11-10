@@ -7,9 +7,11 @@ import { createShapePropsMigrationSequence } from "@tldraw/tlschema";
 import { T } from "@tldraw/validate";
 import { appWidget } from "./app";
 import { claudeActivityWidget } from "./claude-activity";
+import { contentCalendarWidget } from "./content-calendar";
+import { githubPrWidget } from "./github-pr";
 import { helloWidget } from "./hello";
 import { slackWidget } from "./slack";
-import type { AnyConfig, WidgetField, WidgetManifest, WidgetState } from "./types";
+import { type AnyConfig, safeHttpUrl, type WidgetField, type WidgetManifest, type WidgetState } from "./types";
 
 export * from "./types";
 
@@ -23,7 +25,7 @@ export interface WidgetProps {
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: each manifest has its own config type.
-export const WIDGETS: WidgetManifest<any, any>[] = [helloWidget, slackWidget, claudeActivityWidget, appWidget];
+export const WIDGETS: WidgetManifest<any, any>[] = [helloWidget, slackWidget, claudeActivityWidget, appWidget, contentCalendarWidget, githubPrWidget];
 
 export function widgetManifest(id: string): WidgetManifest | undefined {
   return WIDGETS.find((w) => w.id === id);
@@ -115,6 +117,14 @@ export function widgetOutline(props: Pick<WidgetProps, "widgetId" | "config">, s
   const st = state ? `${state.status}${detail ? `, ${detail}` : ""}${state.reason ? `: ${state.reason}` : ""}` : "not open";
   const desc = m.describe(props.config, state);
   return `widget ${m.id} ${m.summary(props.config, state)} (${st})${desc ? ` ${JSON.stringify(desc.length > 160 ? `${desc.slice(0, 159)}…` : desc)}` : ""}`;
+}
+
+// A widget's link out (manifest headerLink), checked to be a plain http(s) URL; or null.
+export function widgetLink(props: Pick<WidgetProps, "widgetId" | "config">, state: WidgetState | null): { href: string; label: string; title?: string } | null {
+  const m = widgetManifest(props.widgetId);
+  const l = m?.headerLink?.(props.config, state);
+  const href = l ? safeHttpUrl(l.href) : null;
+  return l && href ? { ...l, href } : null;
 }
 
 // JSON schema of a widget's config, for board_widget list.

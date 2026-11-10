@@ -5,6 +5,7 @@
 
 import { perfCount } from "./perf";
 import { checkingRemoteSnapshot, staleRemoteStatus } from "../../shared/remote-status";
+import { startingView } from "../../shared/start-pending";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { type Computed, computed, type Editor, isUninitialized } from "tldraw";
 import type { TranscriptSnapshot } from "../../shared/components/transcript";
@@ -167,6 +168,15 @@ class AgentStore {
     }, delay);
   }
 
+  // The frame's start is still pending (shared/start-pending.ts): a denied or "not found"
+  // agent is not created yet, so keep asking instead of giving up after a few tries.
+  retryStarting(agentId: string): void {
+    const view = this.views.get(agentId);
+    if (!view || (!view.denied && view.status !== "missing")) return;
+    this.deniedCount.delete(agentId);
+    if (!this.retryTimer) this.open(true);
+  }
+
   private open(force = false): void {
     const ids = (typeof document!=='undefined'&&document.hidden?[]:[...this.refs.keys()]).sort((a,b)=>(this.recent.get(b)??0)-(this.recent.get(a)??0)||a.localeCompare(b)).slice(0,64).sort();
     const key = ids.join(",");
@@ -264,7 +274,13 @@ export const STARTING_GRACE_MS = 30_000;
 // What to call an agent's state. Right after a bind, Paseo may not know the agent
 // yet ("agent not found"); call that "starting" for the first 30 s.
 // frameCloud: cloud session cards in the frame still running (meta.paseo.cloudSessions).
-export function displayStatus(view: AgentView | null, boundAt?: number, frameStatus?: string, frameSubagents?: number, frameCloud?: number, remoteHost?: string | null): string {
+// pendingStart: the frame's start is still under way (shared/start-pending.ts). Until the
+// agent reports a real status it is "starting", never "checking…", "not found" or an
+// error (a remote start can take minutes, and the host says "not found" until it is done).
+export function displayStatus(view: AgentView | null, boundAt?: number, frameStatus?: string, frameSubagents?: number, frameCloud?: number, remoteHost?: string | null, pendingStart = false): string {
+  if (pendingStart && startingView(view, remoteHost, !!staleRemoteStatus(view?.remote))) return "starting";
+  // The start failed (the frame says error) and the agent never reported: error, not "checking…".
+  if (frameStatus === "error" && startingView(view, remoteHost, !!staleRemoteStatus(view?.remote))) return "error";
   if(remoteHost && !view?.remote)return "checking…";
   const stale=staleRemoteStatus(view?.remote);
   if(stale)return stale;

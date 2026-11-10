@@ -39,8 +39,10 @@ cd bunny-board
 ```
 
 If using a release archive instead, retain its SHA-256 receipt and extract it into an
-empty folder. You need Docker with Compose, a browser, and a supported Claude or Codex
+empty folder. You need Docker with Compose v2.24 or newer, a browser, and a supported Claude or Codex
 account to run agent tasks. Provider usage is charged under your own account's terms.
+
+Check `docker compose version` before starting.
 
 From the extracted folder:
 

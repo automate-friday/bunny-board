@@ -11,7 +11,7 @@ export interface ReleasedAgent {
   frameName: string;
 }
 
-const btn: React.CSSProperties = { padding: "6px 10px", borderRadius: 6, border: "1px solid #bbb", background: "#f7f7f7", cursor: "pointer", font: "inherit" };
+const btn: React.CSSProperties = { padding: "6px 10px", borderRadius: 6, border: "1px solid light-dark(#bbb, var(--bunny-line))", background: "light-dark(#f7f7f7, var(--bunny-raised))", cursor: "pointer", font: "inherit" };
 
 async function archive(agentId: string): Promise<void> {
   const go = () => api(`/api/ui/released/${encodeURIComponent(agentId)}/archive`, { method: "POST", body: "{}" });
@@ -32,10 +32,10 @@ export function ReleasedPrompt({ agents, onDone }: { agents: ReleasedAgent[]; on
     <div
       data-testid="released-prompt"
       onPointerDown={(e) => e.stopPropagation()}
-      style={{ width: "min(400px, 45vw)", flexShrink: 0, background: "#fafafa", borderLeft: "1px solid #ddd", boxShadow: "-4px 0 18px rgba(0,0,0,0.08)", pointerEvents: "all", display: "flex", flexDirection: "column", gap: 10, padding: 14, font: "13px system-ui, sans-serif", zIndex: 400, overflowY: "auto" }}
+      style={{ width: "min(400px, 45vw)", flexShrink: 0, background: "light-dark(#fafafa, var(--bunny-surface))", borderLeft: "1px solid light-dark(#ddd, var(--bunny-line))", boxShadow: "-4px 0 18px rgba(0,0,0,0.08)", pointerEvents: "all", display: "flex", flexDirection: "column", gap: 10, padding: 14, font: "13px system-ui, sans-serif", zIndex: 400, overflowY: "auto" }}
     >
       {agents.map((a) => (
-        <div key={a.agentId} data-testid="released-agent" data-agent-id={a.agentId} style={{ background: "#fff", border: "1px solid #e4e4e4", borderRadius: 8, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div key={a.agentId} data-testid="released-agent" data-agent-id={a.agentId} style={{ background: "light-dark(#fff, var(--bunny-surface))", border: "1px solid light-dark(#e4e4e4, var(--bunny-line))", borderRadius: 8, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
           <div>
             You deleted the frame <b>{a.frameName || "(unnamed)"}</b>. Its conversation is still running in Paseo.
           </div>
@@ -47,7 +47,7 @@ export function ReleasedPrompt({ agents, onDone }: { agents: ReleasedAgent[]; on
             <button
               type="button"
               data-testid="released-archive"
-              style={{ ...btn, background: "#c62828", borderColor: "#c62828", color: "#fff" }}
+              style={{ ...btn, background: "#c62828", borderColor: "light-dark(#c62828, hsl(0 35% 39%))", color: "#fff" }}
               disabled={busy === a.agentId}
               onClick={() => {
                 setBusy(a.agentId);
@@ -63,7 +63,7 @@ export function ReleasedPrompt({ agents, onDone }: { agents: ReleasedAgent[]; on
           </div>
         </div>
       ))}
-      {err ? <div style={{ color: "#c00" }}>{err}</div> : null}
+      {err ? <div style={{ color: "light-dark(#c00, hsl(0 88% 74%))" }}>{err}</div> : null}
     </div>
   );
 }

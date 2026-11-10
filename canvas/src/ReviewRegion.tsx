@@ -55,5 +55,5 @@ export function ReviewRegions({ editor }: { editor: Editor }) {
     return () => { editor.off("before-event", onEvent); };
 
   }, [editor]);
-  return <>{badges.map(({frame,point}) => point ? <div key={frame.id} data-testid={isZone(frame) ? "lgtm-area-badge" : "done-frame-badge"} style={{ position:"fixed",left:point.x+8,top:point.y,pointerEvents:"none",background:isZone(frame)?"#e8e9ff":"#e3f2df",border:"1px solid #789476",borderRadius:5,padding:"3px 6px",font:"12px system-ui",zIndex:220 }}>{isZone(frame) ? "LGTM area" : `Done · ${paseoOf(frame).mode === "manual" ? "deltas paused" : "delta mode changed"}`}</div> : null)}</>;
+  return <>{badges.map(({frame,point}) => point ? <div key={frame.id} data-testid={isZone(frame) ? "lgtm-area-badge" : "done-frame-badge"} style={{ position:"fixed",left:point.x+8,top:point.y,pointerEvents:"none",background:isZone(frame)?"light-dark(#e8e9ff, hsl(237 45% 21%))":"light-dark(#e3f2df, var(--bunny-raised))",border:"1px solid light-dark(#789476, var(--bunny-line))",borderRadius:5,padding:"3px 6px",font:"12px system-ui",zIndex:220 }}>{isZone(frame) ? "LGTM area" : `Done · ${paseoOf(frame).mode === "manual" ? "deltas paused" : "delta mode changed"}`}</div> : null)}</>;
 }

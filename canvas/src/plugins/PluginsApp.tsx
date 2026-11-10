@@ -5,7 +5,8 @@
 // light look; one column on phones.
 
 import { useEffect, useState } from "react";
-import { isDevPlugin, type PluginInfo, pluginInfo, pluginPoster, visiblePlugins } from "../../../shared/plugins";
+import { BUILTINS, type BuiltinInfo, builtinInfo, isDevPlugin, type PluginInfo, pluginInfo, pluginPoster, visiblePlugins } from "../../../shared/plugins";
+import { PortalIcon } from "../portals/icons";
 import type { PluginMedia } from "../../../shared/widgets";
 import { BUNNY_CSS, BunnyMark } from "../BunnyMark";
 import { WidgetIcon } from "../components/widget/icons";
@@ -14,71 +15,71 @@ import { boardHref, installPlugin, pluginsHref, uninstallPlugin, useDevPlugins, 
 const CSS = `${BUNNY_CSS}
 html,body{overflow:auto!important;height:auto!important;position:static!important;overscroll-behavior:auto!important;touch-action:auto!important}
 body{margin:0}
-.pl-root{min-height:100vh;background:#f7f8fa;color:#1f2430;font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+.pl-root{min-height:100vh;background:light-dark(#f7f8fa, var(--bunny-surface));color:light-dark(#1f2430, var(--bunny-ink));font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
 .pl-wrap{max-width:1040px;margin:0 auto;padding:20px 16px 64px}
 .pl-top{display:flex;align-items:center;gap:10px;margin-bottom:18px}
-.pl-top a{color:#3a4252;text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-size:14px}
-.pl-top a:hover{color:#1f2430}
+.pl-top a{color:light-dark(#3a4252, var(--bunny-muted));text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-size:14px}
+.pl-top a:hover{color:light-dark(#1f2430, var(--bunny-ink))}
 .pl-h1{font-size:28px;line-height:1.2;margin:0 0 6px;font-weight:700;letter-spacing:-.01em}
-.pl-lead{color:#5a6273;margin:0 0 20px;max-width:640px}
+.pl-lead{color:light-dark(#5a6273, var(--bunny-muted));margin:0 0 20px;max-width:640px}
 .pl-filter{display:flex;gap:6px;margin:0 0 22px}
-.pl-chip{border:1px solid #d9dde4;background:#fff;border-radius:999px;padding:4px 12px;font:inherit;font-size:13px;cursor:pointer;color:#3a4252}
-.pl-chip[aria-pressed=true]{background:#1f2430;border-color:#1f2430;color:#fff}
+.pl-chip{border:1px solid light-dark(#d9dde4, var(--bunny-line));background:light-dark(#fff, var(--bunny-surface));border-radius:999px;padding:4px 12px;font:inherit;font-size:13px;cursor:pointer;color:light-dark(#3a4252, var(--bunny-muted))}
+.pl-chip[aria-pressed=true]{background:#1f2430;border-color:light-dark(#1f2430, var(--bunny-line));color:#fff}
 .pl-section{margin:0 0 32px}
 .pl-h2{font-size:18px;margin:0 0 4px;font-weight:650}
-.pl-sub{color:#6a7282;margin:0 0 14px;font-size:14px}
+.pl-sub{color:light-dark(#6a7282, var(--bunny-muted));margin:0 0 14px;font-size:14px}
 .pl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
-.pl-tile{display:flex;flex-direction:column;background:#fff;border:1px solid #e3e6eb;border-radius:12px;overflow:hidden;text-decoration:none;color:inherit;transition:box-shadow .15s,border-color .15s}
-.pl-tile:hover{border-color:#c9ced6;box-shadow:0 4px 16px rgba(20,30,60,.08)}
-.pl-poster{position:relative;aspect-ratio:16/10;background:#eef0f3;overflow:hidden}
+.pl-tile{display:flex;flex-direction:column;background:light-dark(#fff, var(--bunny-surface));border:1px solid light-dark(#e3e6eb, var(--bunny-line));border-radius:12px;overflow:hidden;text-decoration:none;color:inherit;transition:box-shadow .15s,border-color .15s}
+.pl-tile:hover{border-color:light-dark(#c9ced6, var(--bunny-line));box-shadow:0 4px 16px rgba(20,30,60,.08)}
+.pl-poster{position:relative;aspect-ratio:16/10;background:light-dark(#eef0f3, var(--bunny-raised));overflow:hidden}
 .pl-poster img{width:100%;height:100%;object-fit:cover;object-position:top left;display:block}
 .pl-tile-body{padding:12px 14px 14px;display:flex;flex-direction:column;gap:4px}
 .pl-name{display:flex;align-items:center;gap:8px;font-weight:650;font-size:16px}
-.pl-tagline{color:#5a6273;font-size:14px}
-.pl-meta{color:#7a8292;font-size:12.5px;margin-top:2px}
+.pl-tagline{color:light-dark(#5a6273, var(--bunny-muted));font-size:14px}
+.pl-meta{color:light-dark(#7a8292, var(--bunny-muted));font-size:12.5px;margin-top:2px}
 .pl-badge{font-size:11.5px;font-weight:600;border-radius:5px;padding:1px 6px;white-space:nowrap}
-.pl-badge.ok{color:#1e7a3a;background:#e6f4ea;border:1px solid #b7dfc3}
-.pl-badge.warn{color:#7a5a00;background:#fff6db;border:1px solid #f0dc9a}
-.pl-badge.muted{color:#5a6273;background:#f1f3f6;border:1px solid #e1e4ea}
+.pl-badge.ok{color:light-dark(#1e7a3a, hsl(138 61% 74%));background:light-dark(#e6f4ea, var(--bunny-raised));border:1px solid light-dark(#b7dfc3, hsl(138 35% 39%))}
+.pl-badge.warn{color:light-dark(#7a5a00, hsl(44 88% 74%));background:light-dark(#fff6db, hsl(45 45% 21%));border:1px solid light-dark(#f0dc9a, hsl(46 35% 39%))}
+.pl-badge.muted{color:light-dark(#5a6273, var(--bunny-muted));background:light-dark(#f1f3f6, var(--bunny-raised));border:1px solid light-dark(#e1e4ea, var(--bunny-line))}
 .pl-ph{position:absolute;left:8px;top:8px;background:rgba(31,36,48,.82);color:#fff;font-size:11px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;border-radius:4px;padding:2px 6px}
 .pl-head{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:18px}
-.pl-head-icon{width:48px;height:48px;border-radius:12px;background:#fff;border:1px solid #e3e6eb;display:flex;align-items:center;justify-content:center;color:#2d3442;flex-shrink:0}
+.pl-head-icon{width:48px;height:48px;border-radius:12px;background:light-dark(#fff, var(--bunny-surface));border:1px solid light-dark(#e3e6eb, var(--bunny-line));display:flex;align-items:center;justify-content:center;color:light-dark(#2d3442, var(--bunny-ink));flex-shrink:0}
 .pl-head-text{flex:1;min-width:220px}
 .pl-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.pl-btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:14px;font-weight:600;border-radius:8px;padding:8px 16px;cursor:pointer;border:1px solid #2f80ed;background:#2f80ed;color:#fff}
+.pl-btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:14px;font-weight:600;border-radius:8px;padding:8px 16px;cursor:pointer;border:1px solid light-dark(#2f80ed, hsl(214 35% 39%));background:#2f80ed;color:#fff}
 .pl-btn:disabled{opacity:.6;cursor:default}
-.pl-btn.secondary{background:#fff;color:#3a4252;border-color:#d0d5dd}
+.pl-btn.secondary{background:light-dark(#fff, var(--bunny-surface));color:light-dark(#3a4252, var(--bunny-muted));border-color:light-dark(#d0d5dd, var(--bunny-line))}
 .pl-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:28px;align-items:start}
 @media (max-width:820px){.pl-layout{grid-template-columns:1fr}.pl-h1{font-size:24px}}
-.pl-viewer{position:relative;background:#fff;border:1px solid #e3e6eb;border-radius:12px;overflow:hidden}
-.pl-viewer img,.pl-viewer video{display:block;width:100%;height:auto;max-height:520px;object-fit:contain;background:#f1f3f6}
-.pl-caption{color:#5a6273;font-size:13.5px;padding:8px 12px;border-top:1px solid #eef0f3}
+.pl-viewer{position:relative;background:light-dark(#fff, var(--bunny-surface));border:1px solid light-dark(#e3e6eb, var(--bunny-line));border-radius:12px;overflow:hidden}
+.pl-viewer img,.pl-viewer video{display:block;width:100%;height:auto;max-height:520px;object-fit:contain;background:light-dark(#f1f3f6, var(--bunny-raised))}
+.pl-caption{color:light-dark(#5a6273, var(--bunny-muted));font-size:13.5px;padding:8px 12px;border-top:1px solid light-dark(#eef0f3, var(--bunny-line))}
 .pl-thumbs{display:flex;gap:8px;margin-top:10px;overflow-x:auto;padding-bottom:4px}
-.pl-thumb{position:relative;flex:0 0 112px;height:70px;border-radius:8px;overflow:hidden;border:2px solid transparent;background:#eef0f3;padding:0;cursor:pointer}
-.pl-thumb[aria-current=true]{border-color:#2f80ed}
+.pl-thumb{position:relative;flex:0 0 112px;height:70px;border-radius:8px;overflow:hidden;border:2px solid transparent;background:light-dark(#eef0f3, var(--bunny-raised));padding:0;cursor:pointer}
+.pl-thumb[aria-current=true]{border-color:light-dark(#2f80ed, hsl(214 35% 39%))}
 .pl-thumb img{width:100%;height:100%;object-fit:cover;object-position:top left;display:block}
-.pl-thumb .pl-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;background:rgba(31,36,48,.35)}
+.pl-thumb .pl-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;background:light-dark(rgba(31,36,48,.35), color-mix(in srgb, #2b303b 35%, transparent))}
 .pl-block{margin:26px 0 0}
 .pl-block h2{font-size:17px;margin:0 0 6px;font-weight:650}
-.pl-block p{margin:0;color:#343b49;max-width:680px}
-.pl-side{background:#fff;border:1px solid #e3e6eb;border-radius:12px;padding:14px 16px}
-.pl-side h3{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:#7a8292;margin:14px 0 6px;font-weight:650}
+.pl-block p{margin:0;color:light-dark(#343b49, var(--bunny-ink));max-width:680px}
+.pl-side{background:light-dark(#fff, var(--bunny-surface));border:1px solid light-dark(#e3e6eb, var(--bunny-line));border-radius:12px;padding:14px 16px}
+.pl-side h3{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:light-dark(#7a8292, var(--bunny-muted));margin:14px 0 6px;font-weight:650}
 .pl-side h3:first-child{margin-top:0}
 .pl-side dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:14px}
-.pl-side dt{color:#7a8292}
+.pl-side dt{color:light-dark(#7a8292, var(--bunny-muted))}
 .pl-side dd{margin:0;word-break:break-word}
-.pl-side a,.pl-block a{color:#2563c9}
+.pl-side a,.pl-block a{color:light-dark(#2563c9, hsl(217 69% 74%))}
 .pl-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
-.pl-list li{display:flex;gap:10px;font-size:14px;color:#343b49}
-.pl-kind{flex-shrink:0;font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.04em;color:#5a6273;background:#f1f3f6;border-radius:4px;padding:2px 6px;height:fit-content;margin-top:2px;min-width:58px;text-align:center}
+.pl-list li{display:flex;gap:10px;font-size:14px;color:light-dark(#343b49, var(--bunny-ink))}
+.pl-kind{flex-shrink:0;font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.04em;color:light-dark(#5a6273, var(--bunny-muted));background:light-dark(#f1f3f6, var(--bunny-raised));border-radius:4px;padding:2px 6px;height:fit-content;margin-top:2px;min-width:58px;text-align:center}
 .pl-note{margin-top:14px;font-size:13.5px;border-radius:8px;padding:10px 12px}
-.pl-note.warn{background:#fff6db;color:#6b5000;border:1px solid #f0dc9a}
-.pl-note.info{background:#eef4fe;color:#284a86;border:1px solid #c9dafa}
+.pl-note.warn{background:light-dark(#fff6db, hsl(45 45% 21%));color:light-dark(#6b5000, hsl(45 88% 74%));border:1px solid light-dark(#f0dc9a, hsl(46 35% 39%))}
+.pl-note.info{background:light-dark(#eef4fe, var(--bunny-raised));color:light-dark(#284a86, hsl(218 54% 74%));border:1px solid light-dark(#c9dafa, hsl(219 35% 39%))}
 .pl-fields{display:flex;flex-direction:column;gap:8px}
-.pl-field{border:1px solid #eef0f3;border-radius:8px;padding:8px 12px;background:#fff}
+.pl-field{border:1px solid light-dark(#eef0f3, var(--bunny-line));border-radius:8px;padding:8px 12px;background:light-dark(#fff, var(--bunny-surface))}
 .pl-field b{font-size:14px}
-.pl-field span{color:#6a7282;font-size:13.5px}
-.pl-field code{font-size:12.5px;background:#f1f3f6;border-radius:4px;padding:1px 5px;word-break:break-all}
+.pl-field span{color:light-dark(#6a7282, var(--bunny-muted));font-size:13.5px}
+.pl-field code{font-size:12.5px;background:light-dark(#f1f3f6, var(--bunny-raised));border-radius:4px;padding:1px 5px;word-break:break-all}
 `;
 
 // --- tiny router: /plugins and /plugins/<id>, keeping ?from=<board> ---------------------
@@ -162,6 +163,105 @@ function Tile({ p, installed }: { p: PluginInfo; installed: boolean }) {
   );
 }
 
+// The icon of a built-in feature (the page head; widgets use WidgetIcon).
+function BuiltinIcon({ id, size }: { id: string; size: number }) {
+  return id === "portals" ? <span style={{ color: "light-dark(#7c4dcc, hsl(262 55% 74%))", display: "inline-flex" }}><PortalIcon size={size} /></span> : null;
+}
+
+function BuiltinTile({ b }: { b: BuiltinInfo }) {
+  return (
+    <Link to={pluginsHref(b.id)} className="pl-tile" testid={`pl-tile-${b.id}`}>
+      <Poster m={b.media.find((m) => m.kind === "image")} />
+      <div className="pl-tile-body">
+        <div className="pl-name">
+          <BuiltinIcon id={b.id} size={18} />
+          <span style={{ flex: 1, minWidth: 0 }}>{b.name}</span>
+          <span className="pl-badge muted" data-testid="pl-builtin-badge">Built in</span>
+        </div>
+        <div className="pl-tagline">{b.tagline}</div>
+        <div className="pl-meta">{b.category} · on the toolbar</div>
+      </div>
+    </Link>
+  );
+}
+
+function BuiltinDetail({ b }: { b: BuiltinInfo }) {
+  useEffect(() => {
+    document.title = `${b.name} · Plugins`;
+  }, [b.name]);
+  return (
+    <>
+      <Top back={{ to: pluginsHref(), label: "All plugins" }} />
+      <div className="pl-head">
+        <div className="pl-head-icon">
+          <BuiltinIcon id={b.id} size={30} />
+        </div>
+        <div className="pl-head-text">
+          <h1 className="pl-h1" data-testid="pl-title">
+            {b.name}
+          </h1>
+          <div className="pl-tagline" style={{ fontSize: 16 }}>
+            {b.tagline}
+          </div>
+        </div>
+        <div className="pl-actions">
+          <span className="pl-badge muted" style={{ fontSize: 13, padding: "4px 8px" }} data-testid="pl-builtin">
+            Built in: on every board
+          </span>
+        </div>
+      </div>
+      <div className="pl-layout">
+        <main>
+          <Gallery media={b.media} name={b.name} />
+          <div className="pl-block">
+            <h2>What it does</h2>
+            <p data-testid="pl-about">{b.about}</p>
+          </div>
+          <div className="pl-block">
+            <h2>Why it matters</h2>
+            <p data-testid="pl-why">{b.whyItMatters}</p>
+          </div>
+          <div className="pl-block">
+            <h2>How to use it</h2>
+            <ol data-testid="pl-howto" style={{ margin: 0, paddingLeft: 20, color: "light-dark(#343b49, var(--bunny-ink))", maxWidth: 680 }}>
+              {b.howTo.map((h) => (
+                <li key={h} style={{ marginBottom: 4 }}>
+                  {h}
+                </li>
+              ))}
+            </ol>
+          </div>
+        </main>
+        <aside className="pl-side" data-testid="pl-side">
+          <h3>What it reaches</h3>
+          <ul className="pl-list" data-testid="pl-permissions">
+            {b.permissions.map((x) => (
+              <li key={x.text}>
+                <span className="pl-kind">{x.kind === "none" ? "nothing" : x.kind}</span>
+                <span>{x.text}</span>
+              </li>
+            ))}
+          </ul>
+          <h3>Details</h3>
+          <dl>
+            <dt>Version</dt>
+            <dd>{b.version}</dd>
+            <dt>Category</dt>
+            <dd>{b.category}</dd>
+            <dt>Source</dt>
+            <dd>
+              <a href={b.source.url} target="_blank" rel="noopener noreferrer">
+                {b.source.label}
+              </a>
+            </dd>
+          </dl>
+          <div className="pl-note info">Built into every board: find it on the bottom toolbar. Nothing to install.</div>
+        </aside>
+      </div>
+    </>
+  );
+}
+
 function Store({ installed, devPlugins }: { installed: string[] | null; devPlugins: boolean }) {
   const [only, setOnly] = useState(false);
   const has = (id: string) => !!installed?.includes(id);
@@ -173,7 +273,7 @@ function Store({ installed, devPlugins }: { installed: string[] | null; devPlugi
     <>
       <Top />
       <h1 className="pl-h1">Plugins</h1>
-      <p className="pl-lead">Live widgets you can put on the board, and that agents deploy and configure for the job they are doing. Open one to see what it does and why you would want it; install the ones you want and they appear in the widget tray on the board's toolbar. Only plugins that have proven themselves on real work are listed.</p>
+      <p className="pl-lead">Live widgets you can put on the board, and that agents deploy and configure for the job they are doing, plus the features built into every board. Open one to see what it does and why you would want it; install the ones you want and they appear in the widget tray on the board's toolbar. Only plugins that have proven themselves on real work are listed.</p>
       <div className="pl-filter" role="group" aria-label="Show">
         <button type="button" className="pl-chip" aria-pressed={!only} onClick={() => setOnly(false)} data-testid="pl-filter-all">
           All
@@ -191,6 +291,17 @@ function Store({ installed, devPlugins }: { installed: string[] | null; devPlugi
           ))}
         </div>
       </section>
+      {only ? null : (
+        <section className="pl-section" data-testid="pl-builtins">
+          <h2 className="pl-h2">Built in</h2>
+          <p className="pl-sub">Part of every board, on the toolbar: nothing to install.</p>
+          <div className="pl-grid">
+            {BUILTINS.map((b) => (
+              <BuiltinTile key={b.id} b={b} />
+            ))}
+          </div>
+        </section>
+      )}
       {apps.length || (only && devPlugins) ? (
       <section className="pl-section" data-testid="pl-apps">
         <h2 className="pl-h2">Apps</h2>
@@ -389,6 +500,7 @@ export function PluginsApp() {
   const devPlugins = useDevPlugins();
   const id = decodeURIComponent(path.replace(/^\/plugins\/?/, "").replace(/\/$/, ""));
   const p = id ? pluginInfo(id) : undefined;
+  const b = id && !p ? builtinInfo(id) : undefined;
   useEffect(() => {
     if (!id) document.title = "Plugins";
   }, [id]);
@@ -408,6 +520,8 @@ export function PluginsApp() {
           </>
         ) : p ? (
           <Detail p={p} installed={installed} />
+        ) : b ? (
+          <BuiltinDetail b={b} />
         ) : (
           <>
             <Top back={{ to: pluginsHref(), label: "All plugins" }} />

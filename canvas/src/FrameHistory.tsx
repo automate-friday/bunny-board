@@ -29,14 +29,14 @@ const swatch = (kind: Kind): React.CSSProperties => ({ borderRadius: kind === "a
 
 export const HistoryCtx = createContext<{ frameId: string | null; open(frameId: string): void; close(): void }>({ frameId: null, open() {}, close() {} });
 
-const btn: React.CSSProperties = { padding: "6px 10px", borderRadius: 6, border: "1px solid #bbb", background: "#f7f7f7", cursor: "pointer", font: "inherit" };
+const btn: React.CSSProperties = { padding: "6px 10px", borderRadius: 6, border: "1px solid light-dark(#bbb, var(--bunny-line))", background: "light-dark(#f7f7f7, var(--bunny-raised))", cursor: "pointer", font: "inherit" };
 
 // The toolbar button (FramePanel).
 export function HistoryButton({ frameId, style, className }: { frameId: string; style?: React.CSSProperties; className?: string }) {
   const history = useContext(HistoryCtx);
   const on = history.frameId === frameId;
   return (
-    <button type="button" className={className} style={{ ...(style ?? btn), ...(on ? { background: "#fff4e6", borderColor: HISTORY_COLOR.agent } : {}) }} data-testid="frame-history" title="Scrub through this frame's past versions (read-only), and restore one" onClick={() => (on ? history.close() : history.open(frameId))}>
+    <button type="button" className={className} style={{ ...(style ?? btn), ...(on ? { background: "light-dark(#fff4e6, hsl(34 45% 21%))", borderColor: HISTORY_COLOR.agent } : {}) }} data-testid="frame-history" title="Scrub through this frame's past versions (read-only), and restore one" onClick={() => (on ? history.close() : history.open(frameId))}>
       <Emoji name="history" /> History
     </button>
   );
@@ -111,14 +111,14 @@ export function FrameHistoryView({ editor, boardId, frameId, shapeUtils }: { edi
       {entry ? <VersionOverlay editor={editor} frame={frame} records={records} entry={entry} shapeUtils={shapeUtils} /> : null}
       <div
         data-testid="history-bar"
-        style={{ position: "absolute", left: "50%", bottom: 64, transform: "translateX(-50%)", width: "min(640px, 94vw)", pointerEvents: "all", background: "white", border: "1px solid #ddd", borderRadius: 10, boxShadow: "0 4px 18px rgba(0,0,0,0.14)", padding: "10px 12px", font: "13px system-ui, sans-serif", zIndex: 310, display: "flex", flexDirection: "column", gap: 6 }}
+        style={{ position: "absolute", left: "50%", bottom: 64, transform: "translateX(-50%)", width: "min(640px, 94vw)", pointerEvents: "all", background: "light-dark(white, var(--bunny-surface))", border: "1px solid light-dark(#ddd, var(--bunny-line))", borderRadius: 10, boxShadow: "0 4px 18px rgba(0,0,0,0.14)", padding: "10px 12px", font: "13px system-ui, sans-serif", zIndex: 310, display: "flex", flexDirection: "column", gap: 6 }}
         onPointerDown={(e) => e.stopPropagation()}
         // Arrow keys move the slider here, not the selected shapes.
         onKeyDown={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <b>History · {frame.props.name || "Frame"}</b>
-          <span style={{ color: "#888" }}>{n} version{n === 1 ? "" : "s"}</span>
+          <span style={{ color: "light-dark(#888, var(--bunny-muted))" }}>{n} version{n === 1 ? "" : "s"}</span>
           <span style={{ flex: 1 }} />
           <Legend kind="human" label="Human" />
           <Legend kind="agent" label="Agent" />
@@ -152,10 +152,10 @@ export function FrameHistoryView({ editor, boardId, frameId, shapeUtils }: { edi
                 data-kind={e.kind}
                 title={`${clock(e.at)} · ${who(e)}`}
                 onClick={() => setPos(i)}
-                style={{ position: "absolute", left: `calc(${(i / Math.max(1, n)) * 100}% - 5px)`, top: 2, width: 10, height: 10, padding: 0, ...swatch(e.kind), border: i === at ? "2px solid #222" : "1px solid white", cursor: "pointer" }}
+                style={{ position: "absolute", left: `calc(${(i / Math.max(1, n)) * 100}% - 5px)`, top: 2, width: 10, height: 10, padding: 0, ...swatch(e.kind), border: i === at ? "2px solid light-dark(#222, var(--bunny-line))" : "1px solid light-dark(white, var(--bunny-line))", cursor: "pointer" }}
               />
             ))}
-            <span style={{ position: "absolute", right: -2, top: 0, fontSize: 11, color: at >= n ? "#222" : "#999", fontWeight: at >= n ? 600 : 400 }}>now</span>
+            <span style={{ position: "absolute", right: -2, top: 0, fontSize: 11, color: at >= n ? "light-dark(#222, var(--bunny-ink))" : "light-dark(#999, var(--bunny-muted))", fontWeight: at >= n ? 600 : 400 }}>now</span>
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 30 }}>
@@ -166,16 +166,16 @@ export function FrameHistoryView({ editor, boardId, frameId, shapeUtils }: { edi
                 v{at + 1} · {clock(entry.at)} · {who(entry)} · <i>read-only</i>
               </span>
               <span style={{ flex: 1 }} />
-              <button type="button" style={{ ...btn, background: "#2f80ed", color: "white", borderColor: "#2f80ed" }} data-testid="history-restore" disabled={busy || !records} onClick={() => void restore()}>
+              <button type="button" style={{ ...btn, background: "#2f80ed", color: "white", borderColor: "light-dark(#2f80ed, hsl(214 35% 39%))" }} data-testid="history-restore" disabled={busy || !records} onClick={() => void restore()}>
                 {busy ? "Restoring…" : "Restore this version"}
               </button>
             </>
           ) : (
-            <span data-testid="history-label" style={{ color: "#555" }}>
+            <span data-testid="history-label" style={{ color: "light-dark(#555, var(--bunny-muted))" }}>
               {n ? "Now: the live frame. Drag the slider back to see an earlier version." : "No versions yet: edits in this frame are recorded as they settle."}
             </span>
           )}
-          {err ? <span style={{ color: "#c00" }}>{err}</span> : null}
+          {err ? <span style={{ color: "light-dark(#c00, hsl(0 88% 74%))" }}>{err}</span> : null}
         </div>
       </div>
     </>
@@ -184,7 +184,7 @@ export function FrameHistoryView({ editor, boardId, frameId, shapeUtils }: { edi
 
 function Legend({ kind, label }: { kind: Kind; label: string }) {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#555" }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "light-dark(#555, var(--bunny-muted))" }}>
       <span style={{ width: 9, height: 9, ...swatch(kind) }} />
       {label}
     </span>
@@ -194,6 +194,7 @@ function Legend({ kind, label }: { kind: Kind; label: string }) {
 // The chosen version drawn over the live frame (covering it), in this tab only. The frame
 // sits at the live frame's position; its size is the version's.
 function VersionOverlay({ editor, frame, records, entry, shapeUtils }: { editor: Editor; frame: TLFrameShape; records: Rec[] | undefined; entry: Summary; shapeUtils: readonly TLAnyShapeUtilConstructor[] }) {
+  const darkMode = useValue("history-theme", () => editor.user.getIsDarkMode(), [editor]);
   const old = records?.find((r) => r.id === frame.id);
   const w = (old?.props.w as number | undefined) ?? frame.props.w;
   const h = (old?.props.h as number | undefined) ?? frame.props.h;
@@ -220,14 +221,14 @@ function VersionOverlay({ editor, frame, records, entry, shapeUtils }: { editor:
   const bounds = useMemo(() => new Box(0, 0, w, h), [w, h]);
   const lastGood = useRef<React.ReactNode>(null);
   if (!rect) return null;
-  const image = snapshot ? <TldrawImage key={entry.id} licenseKey={TLDRAW_LICENSE_KEY} snapshot={snapshot as never} shapeUtils={shapeUtils} pageId={"page:history" as never} bounds={bounds} padding={0} background /> : lastGood.current;
+  const image = snapshot ? <TldrawImage key={entry.id} licenseKey={TLDRAW_LICENSE_KEY} snapshot={snapshot as never} shapeUtils={shapeUtils} pageId={"page:history" as never} darkMode={darkMode} bounds={bounds} padding={0} background /> : lastGood.current;
   if (snapshot) lastGood.current = image;
   return (
     <div
       data-testid="history-overlay"
       data-version={entry.id}
       onPointerDown={(e) => e.stopPropagation()}
-      style={{ position: "absolute", left: rect.x, top: rect.y, width: Math.max(w, rect.lw) * rect.z, height: Math.max(h, rect.lh) * rect.z, pointerEvents: "all", background: "#fbfaf7", zIndex: 5, outline: `2px dashed ${HISTORY_COLOR[entry.kind]}`, outlineOffset: 2 }}
+      style={{ position: "absolute", left: rect.x, top: rect.y, width: Math.max(w, rect.lw) * rect.z, height: Math.max(h, rect.lh) * rect.z, pointerEvents: "all", background: "light-dark(#fbfaf7, var(--bunny-surface))", zIndex: 5, outline: `2px dashed ${HISTORY_COLOR[entry.kind]}`, outlineOffset: 2 }}
     >
       <div style={{ position: "absolute", left: 0, top: 0, width: w * rect.z, height: h * rect.z }}>{image}</div>
       <div style={{ position: "absolute", left: 6, bottom: 6, background: HISTORY_COLOR[entry.kind], color: "white", borderRadius: 6, padding: "2px 8px", font: "600 12px system-ui, sans-serif", whiteSpace: "nowrap" }}>

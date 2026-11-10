@@ -11,10 +11,10 @@ const handle: React.CSSProperties = {
   alignItems: "center",
   gap: 6,
   padding: "4px 8px",
-  border: "1px dashed #8aa9d6",
+  border: "1px dashed light-dark(#8aa9d6, hsl(216 35% 39%))",
   borderRadius: 6,
-  background: "#f3f7fd",
-  color: "#2a5aa0",
+  background: "light-dark(#f3f7fd, var(--bunny-surface))",
+  color: "light-dark(#2a5aa0, hsl(216 58% 74%))",
   cursor: "grab",
   userSelect: "none",
   fontSize: 12,
@@ -42,7 +42,7 @@ export function TranscriptDragSource({ editor, agentId, frameId }: { editor: Edi
       >
         ⠿ Drag transcript to board
       </span>
-      <span style={{ fontSize: 11, color: "#666", width: "100%", overflowWrap: "anywhere" }} data-testid="transcript-source">{title} · agent {agentId.slice(0, 8)}{valid ? "" : " · binding changed; select the frame again"}</span>
+      <span style={{ fontSize: 11, color: "light-dark(#666, var(--bunny-muted))", width: "100%", overflowWrap: "anywhere" }} data-testid="transcript-source">{title} · agent {agentId.slice(0, 8)}{valid ? "" : " · binding changed; select the frame again"}</span>
       <button
         type="button"
         data-testid="pin-transcript"

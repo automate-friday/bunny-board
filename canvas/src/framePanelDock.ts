@@ -135,3 +135,17 @@ function useStored<T>(read: () => T, write: (v: T) => void, key: string): [T, (v
 export const usePanelDock = () => useStored(() => readPanelDock(local()), (v) => writePanelDock(local(), v), PANEL_MINIMIZED_KEY);
 export const usePinJump = () => useStored(() => readPinJump(local()), (v) => writePinJump(local(), v), PIN_JUMP_KEY);
 export const usePins = (boardId: string) => useStored(() => readPins(local(), boardId), (v) => writePins(local(), boardId, v), pinsKey(boardId));
+
+// The floating panel sits near the top of the canvas, where a selected frame's title often is
+// too (after a pin jump or a zoom to the frame). Covering the title broke renaming: the first
+// click of a double-click selects the frame and brings the panel up, and the second lands on
+// the panel ("Start conversation" on a frame without an agent). When the panel would overlap
+// the selected frame's title, it moves down to just below the title. Screen pixels; `panel`
+// is where the panel sits unshifted.
+export type ScreenRect = { left: number; top: number; right: number; bottom: number };
+export const HEADING_GAP = 8;
+export function clearOfHeading(panel: ScreenRect, heading: ScreenRect | null, gap = HEADING_GAP): number {
+  if (!heading) return 0;
+  const overlaps = panel.left < heading.right + gap && panel.right > heading.left - gap && panel.top < heading.bottom + gap && panel.bottom > heading.top - gap;
+  return overlaps ? Math.ceil(heading.bottom + gap - panel.top) : 0;
+}

@@ -51,8 +51,8 @@ interface Rect {
 
 // Brand palette (Bunny guide v0.2) and frame-state colours.
 const C = {
-  cream: "#FFF8EB",
-  espresso: "#2E1F16",
+  cream: "light-dark(#FFF8EB, var(--bunny-surface))",
+  espresso: "light-dark(#2E1F16, var(--bunny-ink))",
   violet: "#8875F6",
   lavender: "#C8B4F8",
   orange: "#FF682E",
@@ -60,8 +60,8 @@ const C = {
   working: "#3B82F6",
   done: "#22C55E",
   needs: "#F97316",
-  line: "rgba(46,31,22,.09)",
-  muted: "rgba(46,31,22,.55)",
+  line: "light-dark(rgba(46,31,22,.09), rgba(185,197,216,.22))",
+  muted: "light-dark(rgba(46,31,22,.55), color-mix(in srgb, #edf0f7 55%, transparent))",
 };
 const UI = "Inter, system-ui, -apple-system, sans-serif";
 const UNDO_MS = 15000;
@@ -75,8 +75,8 @@ const CSS = `${BUNNY_CSS}
 @keyframes org-breathe { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
 .org-pop { animation: org-pop .16s ease-out; }
 .org-ring { animation: org-spin 1.1s linear infinite; transform-origin: 50% 50%; }
-.org-row:hover { background: rgba(136,117,246,.07); }
-.org-kbd { font: 11px ${UI}; color: ${C.muted}; border: 1px solid ${C.line}; border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; background: #fff; }
+.org-row:hover { background: light-dark(rgba(136,117,246,.07), color-mix(in srgb, hsl(249 45% 21%) 7%, transparent)); }
+.org-kbd { font: 11px ${UI}; color: ${C.muted}; border: 1px solid ${C.line}; border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; background: light-dark(#fff, var(--bunny-surface)); }
 `;
 
 // macOS screenshot-bar style scope icons.
@@ -90,9 +90,9 @@ const SCOPES: Array<{ kind: ScopeKind; label: string; icon: string }> = [
 // Warm/cold, as the owner asked: show it rather than hide it.
 const WARMTH: Record<BrainState, { color: string; label: string; pulse: boolean }> = {
   warm: { color: C.done, label: "Warm · answers in a few seconds", pulse: false },
-  warming: { color: "#FFC65A", label: "Warming up · ready in a few seconds", pulse: true },
-  starting: { color: "#FFC65A", label: "Starting up · first answer is slower", pulse: true },
-  cold: { color: "rgba(46,31,22,.3)", label: "Cold · opens when you start typing", pulse: false },
+  warming: { color: "light-dark(#FFC65A, hsl(39 88% 74%))", label: "Warming up · ready in a few seconds", pulse: true },
+  starting: { color: "light-dark(#FFC65A, hsl(39 88% 74%))", label: "Starting up · first answer is slower", pulse: true },
+  cold: { color: "light-dark(rgba(46,31,22,.3), color-mix(in srgb, #edf0f7 55%, transparent))", label: "Cold · opens when you start typing", pulse: false },
 };
 const dot = (r: Run) => (r.status === "queued" ? C.starting : r.status === "working" ? C.working : r.status === "error" ? C.needs : r.undone ? C.lavender : C.done);
 const said = (r: Run) => (r.status === "queued" ? "Waiting" : r.status === "working" ? "Working" : r.undone ? "Undone" : (r.summary ?? (r.status === "error" ? "Something went wrong." : "Done.")));
@@ -133,7 +133,7 @@ function ChangedPulse({ editor, ids }: { editor: Editor; ids: string[] }) {
   return (
     <>
       {boxes.map((b, i) => (
-        <div key={i} data-testid="organizer-pulse" style={{ position: "absolute", ...pageRectToScreen(editor, { x: b.x - 6, y: b.y - 6, w: b.w + 12, h: b.h + 12 }), border: `2px solid ${C.violet}`, borderRadius: 10, background: "rgba(200,180,248,.12)", animation: "org-pulse 1.4s ease-out forwards", pointerEvents: "none", zIndex: 1140 }} />
+        <div key={i} data-testid="organizer-pulse" style={{ position: "absolute", ...pageRectToScreen(editor, { x: b.x - 6, y: b.y - 6, w: b.w + 12, h: b.h + 12 }), border: `2px solid ${C.violet}`, borderRadius: 10, background: "light-dark(rgba(200,180,248,.12), color-mix(in srgb, hsl(258 45% 21%) 12%, transparent))", animation: "org-pulse 1.4s ease-out forwards", pointerEvents: "none", zIndex: 1140 }} />
       ))}
     </>
   );
@@ -187,7 +187,7 @@ function PromptedAgents({ editor, ids, sentAt }: { editor: Editor; ids: string[]
                   editor.select(id as TLShapeId);
                   editor.zoomToSelection({ animation: { duration: 300 } });
                 }}
-                style={{ flex: "none", background: "rgba(136,117,246,.12)", border: 0, borderRadius: 999, color: C.violet, font: `600 12px ${UI}`, cursor: "pointer", padding: "2px 9px" }}
+                style={{ flex: "none", background: "light-dark(rgba(136,117,246,.12), color-mix(in srgb, hsl(249 45% 21%) 12%, transparent))", border: 0, borderRadius: 999, color: C.violet, font: `600 12px ${UI}`, cursor: "pointer", padding: "2px 9px" }}
               >
                 Show
               </button>
@@ -393,18 +393,18 @@ export function OrganizerPopover({ editor, boardId }: { editor: Editor; boardId:
             stop(e);
             setOpen(false);
           }}
-          style={{ position: "fixed", inset: 0, background: "rgba(46,31,22,.10)", zIndex: 1200, pointerEvents: "all" }}
+          style={{ position: "fixed", inset: 0, background: "light-dark(rgba(46,31,22,.10), color-mix(in srgb, hsl(23 35% 21%) 10%, transparent))", zIndex: 1200, pointerEvents: "all" }}
         >
           <div
             data-testid="organizer-popover"
             className="org-pop"
             onPointerDown={stop}
             onKeyDown={stop}
-            style={{ position: "absolute", top: "16%", left: "50%", transform: "translateX(-50%)", width: "min(640px, 92vw)", background: "#fff", borderRadius: 16, boxShadow: "0 24px 64px rgba(46,31,22,.22), 0 0 0 1px rgba(46,31,22,.07)", font: `14px ${UI}`, color: C.espresso, overflow: "hidden" }}
+            style={{ position: "absolute", top: "16%", left: "50%", transform: "translateX(-50%)", width: "min(640px, 92vw)", background: "light-dark(#fff, var(--bunny-surface))", borderRadius: 16, boxShadow: "0 24px 64px rgba(46,31,22,.22), 0 0 0 1px rgba(46,31,22,.07)", font: `14px ${UI}`, color: C.espresso, overflow: "hidden" }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px 10px" }}>
               <BunnyMark size={28} mood={busy ? "working" : "idle"} />
-              <span data-testid="organizer-scope-chip" title="What Bunny looks at" style={{ flex: "none", font: `600 12px ${UI}`, color: C.violet, background: "rgba(136,117,246,.1)", borderRadius: 999, padding: "3px 9px" }}>
+              <span data-testid="organizer-scope-chip" title="What Bunny looks at" style={{ flex: "none", font: `600 12px ${UI}`, color: C.violet, background: "light-dark(rgba(136,117,246,.1), color-mix(in srgb, hsl(249 45% 21%) 10%, transparent))", borderRadius: 999, padding: "3px 9px" }}>
                 {scopeLabel}
               </span>
               <input
@@ -452,7 +452,7 @@ export function OrganizerPopover({ editor, boardId }: { editor: Editor; boardId:
                       setScope(sc.kind);
                       input.current?.focus();
                     }}
-                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", border: 0, borderRadius: 8, background: on ? "rgba(136,117,246,.12)" : "transparent", color: disabled ? "rgba(46,31,22,.25)" : on ? C.violet : C.muted, font: `500 12px ${UI}`, cursor: disabled ? "default" : "pointer" }}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", border: 0, borderRadius: 8, background: on ? "light-dark(rgba(136,117,246,.12), color-mix(in srgb, hsl(249 45% 21%) 12%, transparent))" : "transparent", color: disabled ? "light-dark(rgba(46,31,22,.25), color-mix(in srgb, #edf0f7 55%, transparent))" : on ? C.violet : C.muted, font: `500 12px ${UI}`, cursor: disabled ? "default" : "pointer" }}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <path d={sc.icon} />
@@ -472,7 +472,7 @@ export function OrganizerPopover({ editor, boardId }: { editor: Editor; boardId:
                     className="org-row"
                     onMouseEnter={() => setCursor(i)}
                     onClick={() => void send(sg)}
-                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 18px", cursor: "pointer", background: i === cursor ? "rgba(136,117,246,.1)" : undefined }}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 18px", cursor: "pointer", background: i === cursor ? "light-dark(rgba(136,117,246,.1), color-mix(in srgb, hsl(249 45% 21%) 10%, transparent))" : undefined }}
                   >
                     <span style={{ color: C.violet }}>✦</span>
                     <span style={{ flex: 1 }}>{sg}</span>
@@ -552,13 +552,13 @@ export function OrganizerPopover({ editor, boardId }: { editor: Editor; boardId:
           }}
           tabIndex={-1}
           ref={(el) => el?.focus()}
-          style={{ position: "fixed", inset: 0, zIndex: 1250, cursor: "crosshair", background: "rgba(46,31,22,.14)", outline: "none" }}
+          style={{ position: "fixed", inset: 0, zIndex: 1250, cursor: "crosshair", background: "light-dark(rgba(46,31,22,.14), color-mix(in srgb, hsl(23 35% 21%) 14%, transparent))", outline: "none" }}
         >
           <div style={{ position: "absolute", top: 16, left: "50%", transform: "translateX(-50%)", background: C.espresso, color: C.cream, padding: "7px 14px", borderRadius: 999, font: `13px ${UI}`, display: "flex", gap: 8, alignItems: "center" }}>
             <BunnyMark size={18} /> Drag over the part of the board Bunny should work on · esc cancels
           </div>
           {drag ? (
-            <div style={{ position: "absolute", left: Math.min(drag.x0, drag.x1), top: Math.min(drag.y0, drag.y1), width: Math.abs(drag.x1 - drag.x0), height: Math.abs(drag.y1 - drag.y0), border: `2px solid ${C.violet}`, background: "rgba(136,117,246,.08)", borderRadius: 6 }}>
+            <div style={{ position: "absolute", left: Math.min(drag.x0, drag.x1), top: Math.min(drag.y0, drag.y1), width: Math.abs(drag.x1 - drag.x0), height: Math.abs(drag.y1 - drag.y0), border: `2px solid ${C.violet}`, background: "light-dark(rgba(136,117,246,.08), color-mix(in srgb, hsl(249 45% 21%) 8%, transparent))", borderRadius: 6 }}>
               <span style={{ position: "absolute", right: 0, bottom: -24, font: `11px ${UI}`, color: C.cream, background: C.espresso, borderRadius: 5, padding: "2px 6px" }}>
                 {Math.abs(drag.x1 - drag.x0)} × {Math.abs(drag.y1 - drag.y0)}
               </span>
@@ -574,7 +574,7 @@ export function OrganizerPopover({ editor, boardId }: { editor: Editor; boardId:
           <div
             data-testid="organizer-toast"
             className="org-pop"
-            style={{ pointerEvents: "all", position: "relative", marginBottom: 8, background: "#fff", color: C.espresso, padding: "11px 14px 13px", borderRadius: 14, boxShadow: "0 10px 30px rgba(46,31,22,.16), 0 0 0 1px rgba(46,31,22,.07)", width: 290, maxWidth: "calc(100vw - 40px)", fontSize: 13, overflow: "hidden" }}
+            style={{ pointerEvents: "all", position: "relative", marginBottom: 8, background: "light-dark(#fff, var(--bunny-surface))", color: C.espresso, padding: "11px 14px 13px", borderRadius: 14, boxShadow: "0 10px 30px rgba(46,31,22,.16), 0 0 0 1px rgba(46,31,22,.07)", width: 290, maxWidth: "calc(100vw - 40px)", fontSize: 13, overflow: "hidden" }}
           >
             <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
               <span style={{ flex: "none", width: 8, height: 8, borderRadius: 4, marginTop: 5, background: current ? C.working : last ? dot(last) : C.done }} />
@@ -597,7 +597,7 @@ export function OrganizerPopover({ editor, boardId }: { editor: Editor; boardId:
                 ) : null}
               </span>
               {!current && last?.status === "done" && !last.undone && last.moved ? (
-                <button type="button" data-testid="organizer-undo" onClick={() => void undo(last.id)} style={{ flex: "none", background: "rgba(136,117,246,.12)", border: 0, borderRadius: 999, color: C.violet, font: `600 12px ${UI}`, cursor: "pointer", padding: "3px 10px" }}>
+                <button type="button" data-testid="organizer-undo" onClick={() => void undo(last.id)} style={{ flex: "none", background: "light-dark(rgba(136,117,246,.12), color-mix(in srgb, hsl(249 45% 21%) 12%, transparent))", border: 0, borderRadius: 999, color: C.violet, font: `600 12px ${UI}`, cursor: "pointer", padding: "3px 10px" }}>
                   Undo
                 </button>
               ) : null}

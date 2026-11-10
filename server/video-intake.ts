@@ -56,7 +56,7 @@ export class VideoLedger {
     return this.get(id);
   }
   async register(file: string, history?:{status:'handled'|'skipped';reason:string;transcript?:string}): Promise<VideoItem> {
-    if(hasRemoteRuntimeFiles()) {
+    if(hasRemoteRuntimeFiles({op:'recordings'})) {
       const reply=await requestRuntimeFiles({op:'inspect-video',path:file});const v=reply.video;
       if(!v)throw new Error('Runtime did not return video identity');
       if(history?.transcript)throw new Error('Remote historical intake must be seeded from the verified migration ledger');
@@ -85,10 +85,10 @@ export class VideoLedger {
   process(id: string): Promise<VideoItem> {
     const pending = this.pending.get(id); if (pending) return pending;
     const run = this.tail.then(async () => {
-      const i = this.get(id); if(this.stopped||i.status==='handled'||i.status==='skipped')return i; if (i.transcript && (hasRemoteRuntimeFiles() || existsSync(i.transcript))) return i;
+      const i = this.get(id); if(this.stopped||i.status==='handled'||i.status==='skipped')return i; if (i.transcript && (hasRemoteRuntimeFiles({op:'recordings'}) || existsSync(i.transcript))) return i;
       this.update(id, { status: 'transcribing', retryable: false, error: null });
       try {
-        if(hasRemoteRuntimeFiles()){
+        if(hasRemoteRuntimeFiles({op:'recordings'})){
           const reply=await requestRuntimeFiles({op:'transcribe',path:i.path,hash:i.hash});const v=reply.video;
           if(this.stopped)return i;
           if(!v||v.id!==id||!v.transcript||!v.text?.trim())throw new Error('Runtime transcription result is incomplete');

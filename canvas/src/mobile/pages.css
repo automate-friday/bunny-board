@@ -1,8 +1,9 @@
 /* Pages under the open board in the board menu (pages.tsx). */
-.bm-pages { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 6px 14px; padding-left: 8px; border-left: 2px solid #EFE8FE; }
+.bm-pages { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 6px 14px; padding-left: 8px; border-left: 2px solid light-dark(#EFE8FE, hsl(259 35% 39%)); }
 .bm-boards .bm-pages button { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; padding: 8px 10px; }
-.bm-boards .bm-pages button[aria-checked=true] { background: #EFE8FE; color: #6F5CE6; font-weight: 650; }
+.bm-boards .bm-pages button[aria-checked=true] { background: light-dark(#EFE8FE, hsl(259 45% 21%)); color: light-dark(#6F5CE6, hsl(248 73% 74%)); font-weight: 650; }
 .bm-pages span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bm-pages small { flex: none; }
-.bm-board-page { font-size: 14px !important; font-weight: 600; color: rgba(46,31,22,.7) !important; }
+.bm-board-page { font-size: 14px !important; font-weight: 600; color: light-dark(rgba(46,31,22,.7), color-mix(in srgb, #edf0f7 70%, transparent)) !important; }
 .bm-board { max-width: calc(100vw - 140px); }
+.bm-boards .bm-pages button.bm-page-new { color: var(--bm-violet); font-weight: 650; }

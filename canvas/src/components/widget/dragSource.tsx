@@ -51,28 +51,28 @@ export function WidgetDragSource({ editor, manifest, preset, onPlaced, onDraggin
         onPlaced?.();
       }}
       title={preset?.title ?? "Drag onto the board, or tap to add it"}
-      style={preset ? { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, minWidth: 0, textAlign: "left", padding: "5px 8px", border: "1px solid #e1e4ea", borderRadius: 8, background: "#fff", cursor: "grab", font: "11px system-ui" } : { display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "8px 10px", border: "1px solid #e1e4ea", borderRadius: 10, background: "#fff", cursor: "grab", font: "12px system-ui" }}
+      style={preset ? { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, minWidth: 0, textAlign: "left", padding: "5px 8px", border: "1px solid light-dark(#e1e4ea, var(--bunny-line))", borderRadius: 8, background: "light-dark(#fff, var(--bunny-surface))", cursor: "grab", font: "11px system-ui" } : { display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "8px 10px", border: "1px solid light-dark(#e1e4ea, var(--bunny-line))", borderRadius: 10, background: "light-dark(#fff, var(--bunny-surface))", cursor: "grab", font: "12px system-ui" }}
     >
       {preset ? (
         <>
           <span style={{ display: "flex", alignItems: "baseline", gap: 5, maxWidth: "100%" }}>
             <b style={{ fontSize: 12 }}>{preset.label}</b>
             {preset.badge ? (
-              <span data-testid="tray-preset-badge" style={{ fontSize: 10, borderRadius: 4, padding: "0 4px", whiteSpace: "nowrap", ...(preset.badgeTone === "good" ? { color: "#1e7a3a", background: "#e6f4ea", border: "1px solid #b7dfc3" } : { color: "#667", border: "1px solid #e1e4ea" }) }}>
+              <span data-testid="tray-preset-badge" style={{ fontSize: 10, borderRadius: 4, padding: "0 4px", whiteSpace: "nowrap", ...(preset.badgeTone === "good" ? { color: "light-dark(#1e7a3a, hsl(138 61% 74%))", background: "light-dark(#e6f4ea, var(--bunny-raised))", border: "1px solid light-dark(#b7dfc3, hsl(138 35% 39%))" } : { color: "light-dark(#667, var(--bunny-muted))", border: "1px solid light-dark(#e1e4ea, var(--bunny-line))" }) }}>
                 {preset.badge}
               </span>
             ) : null}
           </span>
-          <span style={{ color: "#778", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{preset.description}</span>
+          <span style={{ color: "light-dark(#778, var(--bunny-muted))", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{preset.description}</span>
         </>
       ) : (
         <>
-          <span style={{ color: "#333", display: "inline-flex" }}>
+          <span style={{ color: "light-dark(#333, var(--bunny-ink))", display: "inline-flex" }}>
             <WidgetIcon name={manifest.icon} size={22} />
           </span>
           <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
             <b style={{ fontSize: 13 }}>{manifest.label}</b>
-            <span style={{ color: "#667" }}>{manifest.description}</span>
+            <span style={{ color: "light-dark(#667, var(--bunny-muted))" }}>{manifest.description}</span>
           </span>
         </>
       )}

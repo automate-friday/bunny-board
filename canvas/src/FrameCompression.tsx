@@ -32,6 +32,6 @@ export function FrameCompression({editor,boardId}:{editor:Editor;boardId:string}
         catch(e){setErrors(old=>({...old,[f.id]:(e as Error).message}));}
         finally {setBusy(null);}
       }}>{busy===f.id?'Requesting…':f.pending?'Summary requested · retry':'Compress to this size?'}</button>
-    {errors[f.id]?<div role="alert" style={{color:'#b42318',padding:4}}>{errors[f.id]}</div>:null}
+    {errors[f.id]?<div role="alert" style={{color:'light-dark(#b42318, hsl(4 76% 74%))',padding:4}}>{errors[f.id]}</div>:null}
   </div>)}</>;
 }

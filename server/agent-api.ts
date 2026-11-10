@@ -1,3 +1,5 @@
+import { Effect, type Layer } from "effect";
+import { FrameImages, FrameImagesMock, frameImageFile } from "./frame-images";
 import { hasRemoteRuntimeFiles, requestRuntimeFiles } from "./runtime-files";
 import { readArtifactFile } from "./artifact-files";
 import { writeCompressionSummary } from "./frame-compression";
@@ -22,11 +24,12 @@ import type { CloudSessions } from "./cloud-sessions";
 import { TRANSCRIPT_SIZE, TRANSCRIPT_TYPE, type TranscriptMode, transcriptDefaults } from "../shared/components/transcript";
 import { DEFAULT_INSTALLED, isDevPlugin, visiblePlugins } from "../shared/plugins";
 import { devPluginsEnabled, notAvailableMessage } from "./plugins";
-import { WIDGET_TYPE, WIDGETS, WidgetConfigError, isConfigured, widgetJsonSchema, widgetManifest, widgetOutline, widgetProps } from "../shared/widgets";
+import { WIDGET_TYPE, WIDGETS, WidgetConfigError, isConfigured, widgetJsonSchema, widgetLink, widgetManifest, widgetOutline, widgetProps } from "../shared/widgets";
 import type { WidgetHub } from "./widgets";
 import { isOpenStamp, isStampKind, STAMP_KINDS, STAMP_KIND_INFO, STAMP_TYPE, stampKindProps, stampMeanings, stampOutline, stampSpot } from "../shared/components/stamp";
 import type { BoardConfig } from "./config";
 import type { FrameWatcher } from "./frame-watcher";
+import { ANCHORS, blockersAt, grownBox, humanMovedAt, isAnchor, MAX_FRAME, nearestFreeSpot, reportText, roomReport } from "./frame-room";
 import { type Box, childBoxes, freeGridSlot, GRID, type LayoutStrategy, layoutPositions, occupies, overlaps, type Placed } from "./layout";
 import type { PaseoBridge } from "./paseo-bridge";
 import {
@@ -140,19 +143,10 @@ export const PORTAL_HINT =
   "(the id of the shape or frame holding the details; portal:{x,y,w,h} links a page area). " +
   "board_update({id,patch:{portal:{id:'shape:…'}}}) turns an existing sticky into a portal.";
 
-// What a frame resized to w x h would run into: another frame, or any shape next to it
-// that it does not already cover (a person's stickies below it would otherwise be
-// swallowed, and adopted on the next manual resize), or the edge of a parent frame.
+// What a frame resized to w x h would run into (frame-room.ts): another frame, a shape
+// beside it that it does not already cover, or the edge of a parent frame.
 function growthBlocker(room: BoardRoom, frame: Rec, w: number, h: number): Rec | null {
-  const parent = room.records.get(frame.parentId);
-  if (isShape(parent) && parent.type === "frame" && (frame.x + w > parent.props.w || frame.y + h > parent.props.h)) return parent;
-  const now = { x: frame.x, y: frame.y, w: frame.props.w, h: frame.props.h };
-  const grown = { x: frame.x, y: frame.y, w, h };
-  for (const s of childBoxes(room.records, frame.parentId)) {
-    if (s.id === frame.id) continue;
-    if (s.rec.type === "frame" ? overlaps(grown, s, -1) : overlaps(grown, s, -1) && !overlaps(now, s, -1)) return s.rec;
-  }
-  return null;
+  return blockersAt(room.records, frame, grownBox(frame, w, h))[0] ?? null;
 }
 
 function blockerLabel(o: Rec): string {
@@ -264,6 +258,7 @@ export class AgentApi {
     private readonly watcher: FrameWatcher,
     private readonly log: (m: string) => void,
     private readonly bridge: PaseoBridge | null = null,
+    private readonly images: Layer.Layer<FrameImages> = FrameImagesMock(),
   ) {}
 
   // Set by core.ts; keeps cloud session cards current (server/cloud-sessions.ts).
@@ -359,6 +354,26 @@ export class AgentApi {
     const comments = body.scope === "board" ? null : this.watcher.commentOutline(room, frameId);
     const outline = [locks, base, comments].filter(Boolean).join("\n");
     return { frameId, outline: queued.length ? `${outline}\n\nUnread board deltas:\n${queued.join("\n\n")}` : outline, locks: this.watcher.locks(room.id) };
+  }
+
+  async readImage(room: BoardRoom, frameId: string, body: { id?: unknown }) {
+    const { agentId } = this.ctx(room, frameId);
+    const resolve = () => {
+      if (this.ctx(room, frameId).agentId !== agentId) throw new ScopeError("Frame is now bound to another agent; retry from its conversation");
+      const shape = typeof body.id === "string" ? room.records.get(body.id) : null;
+      if (!shape || shape.type !== "image" || !ancestors(room.records, shape).includes(frameId))
+        throw new ScopeError("Choose an image shape inside your own frame using board_read");
+      const asset = room.records.get(String(shape.props?.assetId));
+      if (!asset || asset.typeName !== "asset" || asset.type !== "image") throw new InputError("Image asset is missing");
+      return {shape, asset, file:frameImageFile(String(asset.props?.src ?? ""))};
+    };
+    const before = resolve();
+    let image;
+    try { image = await Effect.runPromise(Effect.flatMap(FrameImages, s => s.read(before.file)).pipe(Effect.provide(this.images))); }
+    catch (e) { throw new InputError(String(e)); }
+    const after = resolve();
+    if (after.file !== before.file || after.asset.id !== before.asset.id) throw new InputError("Image changed during read; retry");
+    return {id:before.shape.id, name:String(before.asset.props?.name ?? "Image"), ...image};
   }
 
   write(room: BoardRoom, frameId: string, body: { shapes?: ShapeSpec[]; summary?: unknown }) {
@@ -636,22 +651,51 @@ export class AgentApi {
     return { ok: true, deleted: [...doomed] };
   }
 
-  async frame(room: BoardRoom, frameId: string, body: { resize?: { w: number; h: number }; name?: string }) {
+  // board_frame: resize (anchor picks the corner that stays put, so a frame can grow left
+  // or up), move:'auto' (to the nearest free spot that fits, contents included), rename.
+  // A blocked resize explains itself: what is in the way, the room per anchor, a free
+  // spot, and whether push / annex / ask-user would work (reported, never performed).
+  async frame(room: BoardRoom, frameId: string, body: { resize?: { w: number; h: number; anchor?: string }; move?: unknown; name?: string }) {
     const { frame, source, agentId } = this.ctx(room, frameId);
     const next: Rec = { ...frame, props: { ...frame.props } };
-    if (body.resize) {
-      this.layoutLocked(room, "resizing your frame");
-      const { w, h } = body.resize;
-      if (!(w > 0 && h > 0) || w > 6000 || h > 6000) throw new InputError("resize needs 0 < w,h <= 6000");
-      // Do not grow over another frame on the same parent.
-      const o = growthBlocker(room, frame, w, h);
-      if (o) throw new ScopeError(`resizing to ${w}x${h} would ${o.type === "frame" ? "overlap" : "cover"} ${blockerLabel(o)}. Choose a smaller size.`);
+    let moved: { x: number; y: number } | undefined;
+    if (body.move !== undefined && body.move !== "auto") throw new InputError("move accepts only 'auto' (the nearest free spot that fits the frame)");
+    if (body.resize || body.move) this.layoutLocked(room, body.move ? "moving your frame" : "resizing your frame");
+    const anchor = body.resize?.anchor ?? "top-left";
+    if (!isAnchor(anchor)) throw new InputError(`resize.anchor must be one of ${ANCHORS.join(", ")}`);
+    const w = body.resize ? body.resize.w : frame.props.w;
+    const h = body.resize ? body.resize.h : frame.props.h;
+    if (body.resize && (!(w > 0 && h > 0) || w > MAX_FRAME || h > MAX_FRAME)) throw new InputError(`resize needs 0 < w,h <= ${MAX_FRAME}`);
+    if (body.move) {
+      if (humanMovedAt(frame)) throw new ScopeError(`${this.cfg.humanName} placed this frame, so it is not moved automatically. Grow it with resize.anchor, use a portal sticky, or ask ${this.cfg.humanName} to move it.`);
+      const spot = nearestFreeSpot(room.records, frame, { w, h });
+      if (!spot) throw new ScopeError(`no free spot for a ${w}x${h} frame nearby. ${roomReport(room.records, frame, w, h, anchor, this.cfg.humanName).options.askUser.suggested}`);
+      moved = spot;
+      next.x = spot.x;
+      next.y = spot.y;
+      next.props.w = w;
+      next.props.h = h;
+    } else if (body.resize) {
+      const box = grownBox(frame, w, h, anchor);
+      if (blockersAt(room.records, frame, box).length) {
+        const report = roomReport(room.records, frame, w, h, anchor, this.cfg.humanName);
+        throw Object.assign(new ScopeError(reportText(frame, w, h, anchor, report)), { code: "frame-blocked" });
+      }
+      next.x = box.x;
+      next.y = box.y;
       next.props.w = w;
       next.props.h = h;
     }
     if (body.name !== undefined) next.props.name = String(body.name).slice(0, 120);
-    room.write(source, (ops) => ops.put(next));
-    return { ok: true, frameId, w: next.props.w, h: next.props.h, name: next.props.name, agentId };
+    // Growing left or up moves the frame's origin: shift the children back so they stay
+    // where they are on the page.
+    const dx = moved ? 0 : next.x - frame.x;
+    const dy = moved ? 0 : next.y - frame.y;
+    room.write(source, (ops) => {
+      ops.put(next);
+      if (dx || dy) for (const r of room.records.values()) if (isShape(r) && r.parentId === frameId) ops.put({ ...ops.get(r.id)!, x: r.x - dx, y: r.y - dy });
+    });
+    return { ok: true, frameId, x: next.x, y: next.y, w: next.props.w, h: next.props.h, name: next.props.name, agentId, ...(moved ? { moved } : {}) };
   }
 
   // board_pin_transcript: a live transcript card of another agent inside the caller's
@@ -702,7 +746,9 @@ export class AgentApi {
       const { widgetId, config } = shape.props as { widgetId: string; config: Record<string, unknown> };
       const configured = isConfigured(widgetId, config);
       const state = configured && this.widgets ? await this.widgets.read(widgetId, config) : null;
-      return { status: state?.status ?? (configured ? "connecting" : "not set up"), reason: state?.reason ?? null, syncedAt: state?.syncedAt ? new Date(state.syncedAt).toISOString() : null, boardRead: widgetOutline({ widgetId, config }, state), state };
+      // link: the widget's link out (e.g. the Postiz calendar), for agents to hand on.
+      const link = configured ? widgetLink({ widgetId, config }, state) : null;
+      return { status: state?.status ?? (configured ? "connecting" : "not set up"), reason: state?.reason ?? null, syncedAt: state?.syncedAt ? new Date(state.syncedAt).toISOString() : null, boardRead: widgetOutline({ widgetId, config }, state), ...(link ? { link: link.href } : {}), state };
     };
     if (action === "list")
     {
@@ -750,7 +796,7 @@ export class AgentApi {
       const m = widgetManifest(shape.props.widgetId);
       const data = out.state?.data ?? null;
       const json = JSON.stringify(data);
-      return { id, widgetId: shape.props.widgetId, config: shape.props.config, status: out.status, reason: out.reason, syncedAt: out.syncedAt, summary: m ? m.describe(shape.props.config, out.state) : null, ...(json && json.length <= 6000 ? { data } : { dataOmitted: `${json.length} bytes; see summary` }) };
+      return { id, widgetId: shape.props.widgetId, config: shape.props.config, status: out.status, reason: out.reason, syncedAt: out.syncedAt, ...("link" in out ? { link: out.link } : {}), summary: m ? m.describe(shape.props.config, out.state) : null, ...(json && json.length <= 6000 ? { data } : { dataOmitted: `${json.length} bytes; see summary` }) };
     }
     if (action === "configure") {
       if (!ancestors(room.records, shape).includes(frameId)) throw new ScopeError(`widget ${id} is not in your frame; you may configure only widgets in your frame`);
@@ -880,7 +926,7 @@ export class AgentApi {
 
   async runtimeArtifact(room:BoardRoom,frameId:string,body:Parameters<AgentApi['artifact']>[2]) {
     const {agentId}=this.ctx(room,frameId);
-    if(!hasRemoteRuntimeFiles()||!body.path)return this.artifact(room,frameId,body);
+    if(!body.path||!hasRemoteRuntimeFiles({op:'artifact',path:body.path}))return this.artifact(room,frameId,body);
     if(this.watcher.remoteHostOf(agentId))throw new ScopeError('File artifacts must come from the primary runtime host');
     const fetched=await requestRuntimeFiles({op:'artifact',path:body.path,bundle:body.bundle===true});
     if(fetched.path!==body.path||!fetched.files?.length)throw new InputError('Runtime returned no artifact');

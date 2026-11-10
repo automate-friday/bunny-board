@@ -40,12 +40,12 @@ export function LinkRender({ shape }: { shape: LinkShape }) {
         gap: 4,
         padding: "8px 12px",
         boxSizing: "border-box",
-        background: "#f7f9ff",
-        border: `2px solid ${statusKey ? (STATUS_DOT[statusKey] ?? "#8aa9d6") : "#8aa9d6"}`,
+        background: "light-dark(#f7f9ff, var(--bunny-surface))",
+        border: `2px solid ${statusKey ? (STATUS_DOT[statusKey] ?? "light-dark(#8aa9d6, hsl(216 35% 39%))") : "light-dark(#8aa9d6, hsl(216 35% 39%))"}`,
         borderRadius: 10,
         boxShadow: "0 2px 10px rgba(0,0,0,0.08)",
         font: "12px system-ui, sans-serif",
-        color: "#223",
+        color: "light-dark(#223, var(--bunny-ink))",
         overflow: "hidden",
       }}
     >
@@ -58,15 +58,15 @@ export function LinkRender({ shape }: { shape: LinkShape }) {
           data-testid="link-open"
           href={href}
           onPointerDown={stopDown}
-          style={{ pointerEvents: "all", border: "1px solid #2f80ed", background: "#2f80ed", color: "#fff", borderRadius: 6, padding: "3px 10px", textDecoration: "none", fontWeight: 600 }}
+          style={{ pointerEvents: "all", border: "1px solid light-dark(#2f80ed, hsl(214 35% 39%))", background: "#2f80ed", color: "#fff", borderRadius: 6, padding: "3px 10px", textDecoration: "none", fontWeight: 600 }}
           title={href}
         >
           Open
         </a>
       </div>
-      {title || board === here ? <div style={{ color: "#556", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title ? `board ${board}` : "on this board"}</div> : null}
-      <div data-testid="link-status" style={{ display: "flex", alignItems: "center", gap: 6, color: "#445", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {statusKey ? <span style={{ width: 8, height: 8, borderRadius: 4, background: STATUS_DOT[statusKey] ?? "#ccc", flexShrink: 0 }} /> : null}
+      {title || board === here ? <div style={{ color: "light-dark(#556, var(--bunny-muted))", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title ? `board ${board}` : "on this board"}</div> : null}
+      <div data-testid="link-status" style={{ display: "flex", alignItems: "center", gap: 6, color: "light-dark(#445, var(--bunny-muted))", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        {statusKey ? <span style={{ width: 8, height: 8, borderRadius: 4, background: STATUS_DOT[statusKey] ?? "light-dark(#ccc, var(--bunny-raised))", flexShrink: 0 }} /> : null}
         {line}
       </div>
     </div>

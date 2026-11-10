@@ -83,9 +83,9 @@ const newRequestId = () => `imp-${Date.now().toString(36)}-${Math.random().toStr
 const chip = (on: boolean): React.CSSProperties => ({
   padding: "3px 9px",
   borderRadius: 999,
-  border: `1px solid ${on ? "#2f80ed" : "#ccc"}`,
-  background: on ? "#eef4ff" : "#fff",
-  color: on ? "#1d5fbf" : "#444",
+  border: `1px solid ${on ? "light-dark(#2f80ed, hsl(214 35% 39%))" : "light-dark(#ccc, var(--bunny-line))"}`,
+  background: on ? "light-dark(#eef4ff, var(--bunny-raised))" : "light-dark(#fff, var(--bunny-surface))",
+  color: on ? "light-dark(#1d5fbf, hsl(216 74% 74%))" : "light-dark(#444, var(--bunny-ink))",
   cursor: "pointer",
   font: "12px system-ui, sans-serif",
   whiteSpace: "nowrap",
@@ -277,7 +277,7 @@ export function ImportPicker({
       }}
       onKeyDown={onKey}
       onWheel={(e) => e.stopPropagation()}
-      style={{ position: "fixed", inset: 0, background: "rgba(20,24,32,0.28)", zIndex: 1000, display: "flex", justifyContent: "center", alignItems: narrow ? "flex-end" : "flex-start", font: narrow ? "14px system-ui, sans-serif" : "13px system-ui, sans-serif" }}
+      style={{ position: "fixed", inset: 0, background: "light-dark(rgba(20,24,32,0.28), color-mix(in srgb, #2b303b 28%, transparent))", zIndex: 1000, display: "flex", justifyContent: "center", alignItems: narrow ? "flex-end" : "flex-start", font: narrow ? "14px system-ui, sans-serif" : "13px system-ui, sans-serif" }}
     >
       <div
         data-testid="import-picker"
@@ -290,20 +290,20 @@ export function ImportPicker({
           // list as the only scrolling part.
           height: narrow ? "86dvh" : undefined,
           maxHeight: narrow ? "86dvh" : "min(78vh, 760px)",
-          background: "#fff",
+          background: "light-dark(#fff, var(--bunny-surface))",
           borderRadius: narrow ? "16px 16px 0 0" : 12,
           boxShadow: "0 12px 40px rgba(0,0,0,0.22)",
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
-          color: "#222",
+          color: "light-dark(#222, var(--bunny-ink))",
         }}
       >
-        <div style={{ padding: narrow ? "6px 12px 8px" : "12px 14px 8px", borderBottom: "1px solid #eee", display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
-          {narrow ? <span style={{ alignSelf: "center", width: 44, height: 5, borderRadius: 3, background: "#ccc" }} /> : null}
+        <div style={{ padding: narrow ? "6px 12px 8px" : "12px 14px 8px", borderBottom: "1px solid light-dark(#eee, var(--bunny-line))", display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
+          {narrow ? <span style={{ alignSelf: "center", width: 44, height: 5, borderRadius: 3, background: "light-dark(#ccc, var(--bunny-raised))" }} /> : null}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <b style={{ fontSize: 15, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{single ? `Use a conversation in "${target.frameName || "this frame"}"` : narrow ? "Import conversations" : "Import conversations onto the board"}</b>
-            <button type="button" onClick={onClose} aria-label="Close" style={{ border: "none", background: "none", fontSize: 20, cursor: "pointer", color: "#666" }}>
+            <button type="button" onClick={onClose} aria-label="Close" style={{ border: "none", background: "none", fontSize: 20, cursor: "pointer", color: "light-dark(#666, var(--bunny-muted))" }}>
               ×
             </button>
           </div>
@@ -319,7 +319,7 @@ export function ImportPicker({
             }}
             placeholder={source === "remote" ? "Search other Macs' conversations…" : "Search by title or workspace…"}
             // 16 px: iOS zooms the whole page into smaller inputs on focus.
-            style={{ padding: narrow ? "10px 12px" : "8px 10px", fontSize: narrow ? 16 : 14, border: "1px solid #ccc", borderRadius: 8, outline: "none", minWidth: 0 }}
+            style={{ padding: narrow ? "10px 12px" : "8px 10px", fontSize: narrow ? 16 : 14, border: "1px solid light-dark(#ccc, var(--bunny-line))", borderRadius: 8, outline: "none", minWidth: 0 }}
           />
           {remoteOn && !single ? (
             <div style={{ display: "flex", gap: 6 }} data-testid="import-source">
@@ -337,42 +337,42 @@ export function ImportPicker({
                 {f.label}
               </button>
             ))}
-            {source === "remote" ? null : <><span style={{ width: 1, height: 18, background: "#ddd", margin: "0 2px", flexShrink: 0 }} />
+            {source === "remote" ? null : <><span style={{ width: 1, height: 18, background: "light-dark(#ddd, var(--bunny-raised))", margin: "0 2px", flexShrink: 0 }} />
             <button type="button" data-testid="scope-board" style={chip(scope === "board")} onClick={() => setScope("board")} title="Agents in this board's Paseo workspace">
               This board's workspace
             </button>
             <button type="button" data-testid="scope-all" style={chip(scope === "all")} onClick={() => setScope("all")}>
               All
             </button></>}
-            <span style={{ width: 1, height: 18, background: "#ddd", margin: "0 2px" }} />
-            <label style={{ display: "inline-flex", gap: 4, alignItems: "center", color: "#555", fontSize: 12, whiteSpace: "nowrap" }}>
+            <span style={{ width: 1, height: 18, background: "light-dark(#ddd, var(--bunny-raised))", margin: "0 2px" }} />
+            <label style={{ display: "inline-flex", gap: 4, alignItems: "center", color: "light-dark(#555, var(--bunny-muted))", fontSize: 12, whiteSpace: "nowrap" }}>
               <input type="checkbox" data-testid="toggle-bound" style={{ flexShrink: 0 }} checked={includeBound} onChange={(e) => setIncludeBound(e.target.checked)} /> on a board
             </label>
             {source === "remote" ? null : (
-              <label style={{ display: "inline-flex", gap: 4, alignItems: "center", color: "#555", fontSize: 12, whiteSpace: "nowrap" }}>
+              <label style={{ display: "inline-flex", gap: 4, alignItems: "center", color: "light-dark(#555, var(--bunny-muted))", fontSize: 12, whiteSpace: "nowrap" }}>
                 <input type="checkbox" data-testid="toggle-archived" checked={includeArchived} onChange={(e) => setIncludeArchived(e.target.checked)} /> archived
               </label>
             )}
           </div>
         </div>
-        <div data-testid="picker-source-status" style={{ padding: "6px 14px", fontSize: 11, color: "#666" }}>{source === "remote" ? "Remote directory · cached relay status; message-only history coverage." : `Local directory · this host${remoteOn ? " · other Macs available in source switch" : " · other Macs disabled in board settings"}.`}</div>
-        {data && !firstSnapshotPending ? <div data-testid="picker-updated" style={{ padding: "0 14px 6px", fontSize: 11, color: "#666" }}>{directory.updatedSeconds === null ? "Update age unavailable" : `${directory.scan ? "Preview updated" : "Updated"} ${directory.updatedSeconds} s ago`}{directory.refreshing && !asking ? " · refreshing server cache…" : ""}</div> : null}
+        <div data-testid="picker-source-status" style={{ padding: "6px 14px", fontSize: 11, color: "light-dark(#666, var(--bunny-muted))" }}>{source === "remote" ? "Remote directory · cached relay status; message-only history coverage." : `Local directory · this host${remoteOn ? " · other Macs available in source switch" : " · other Macs disabled in board settings"}.`}</div>
+        {data && !firstSnapshotPending ? <div data-testid="picker-updated" style={{ padding: "0 14px 6px", fontSize: 11, color: "light-dark(#666, var(--bunny-muted))" }}>{directory.updatedSeconds === null ? "Update age unavailable" : `${directory.scan ? "Preview updated" : "Updated"} ${directory.updatedSeconds} s ago`}{directory.refreshing && !asking ? " · refreshing server cache…" : ""}</div> : null}
         <div ref={list} data-testid="import-list" data-directory-query={data ? query : undefined} style={{ flex: 1, overflowY: "auto", minHeight: 120, overscrollBehavior: "contain", WebkitOverflowScrolling: "touch", touchAction: "pan-y" } as React.CSSProperties}>
-          {loading && !data ? <div data-testid="picker-loading" style={{ padding: 16, color: "#888" }}>Loading conversations…</div> : null}
-          {directory.slow && !data ? <div data-testid="picker-waiting" role="status" style={{ padding: 16, color: "#886000" }}>No conversations received yet for this filter. The directory is still responding; results will appear here. <button type="button" onClick={directory.refresh}>Retry now</button></div> : null}
-          {source === "remote" && !directory.error && (!data || asking) ? <div data-testid="remote-directory-pending" role="status" style={{ padding: 16, color: "#886000" }}>Still asking the other Macs…{rows.length ? firstSnapshotPending ? " Conversations received so far are available." : " Cached conversations remain available." : " Conversations will appear when a snapshot arrives."}</div> : null}
+          {loading && !data ? <div data-testid="picker-loading" style={{ padding: 16, color: "light-dark(#888, var(--bunny-muted))" }}>Loading conversations…</div> : null}
+          {directory.slow && !data ? <div data-testid="picker-waiting" role="status" style={{ padding: 16, color: "light-dark(#886000, hsl(42 88% 74%))" }}>No conversations received yet for this filter. The directory is still responding; results will appear here. <button type="button" onClick={directory.refresh}>Retry now</button></div> : null}
+          {source === "remote" && !directory.error && (!data || asking) ? <div data-testid="remote-directory-pending" role="status" style={{ padding: 16, color: "light-dark(#886000, hsl(42 88% 74%))" }}>Still asking the other Macs…{rows.length ? firstSnapshotPending ? " Conversations received so far are available." : " Cached conversations remain available." : " Conversations will appear when a snapshot arrives."}</div> : null}
           {source === "remote" && data?.directoryState === "disabled" ? <div role="status" style={{ padding: 16 }}>Other Macs are disabled in board settings.</div> : null}
           {source === "remote" && data?.errors && Object.keys(data.errors).length ? (
-            <div data-testid="remote-errors" style={{ padding: "8px 14px", color: "#b35c00", fontSize: 12 }}>
+            <div data-testid="remote-errors" style={{ padding: "8px 14px", color: "light-dark(#b35c00, hsl(31 88% 74%))", fontSize: 12 }}>
               {Object.entries(data.errors).map(([h, e]) => `${h}: ${e}`).join(" · ")} {!asking ? <button type="button" onClick={directory.retry}>Retry other Macs</button> : null}
             </div>
           ) : null}
           {data && !rows.length && !asking && !firstSnapshotPending && !remoteFailed && data.directoryState !== "disabled" ? (
-            <div data-testid="picker-empty" style={{ padding: 16, color: "#888" }}>
+            <div data-testid="picker-empty" style={{ padding: 16, color: "light-dark(#888, var(--bunny-muted))" }}>
               {scope === "board" && !data.boardWorkspaceId ? "This board has no Paseo workspace yet (it gets one with its first started conversation)." : directory.scan && !directory.ended ? "No matches loaded yet. Continue scanning later pages." : "No conversations match."}
             </div>
           ) : null}
-          {data?.stale && !asking && rows.length > 0 ? <div role="status" style={{ padding: "8px 14px", color: "#9c4b00" }}>Cached results; {directory.refreshing ? "refresh pending" : "use Refresh list to check again"}.</div> : null}
+          {data?.stale && !asking && rows.length > 0 ? <div role="status" style={{ padding: "8px 14px", color: "light-dark(#9c4b00, hsl(29 88% 74%))" }}>Cached results; {directory.refreshing ? "refresh pending" : "use Refresh list to check again"}.</div> : null}
           {rows.map((r, i) => {
             const on = selected.has(r.id);
             const can = selectable(r);
@@ -393,8 +393,8 @@ export function ImportPicker({
                   alignItems: "center",
                   padding: narrow ? "11px 12px" : "8px 14px",
                   cursor: can ? "pointer" : "default",
-                  background: i === hi ? "#f3f7fd" : on ? "#f8fbff" : "#fff",
-                  borderLeft: `3px solid ${on ? "#2f80ed" : "transparent"}`,
+                  background: i === hi ? "light-dark(#f3f7fd, var(--bunny-surface))" : on ? "light-dark(#f8fbff, var(--bunny-surface))" : "light-dark(#fff, var(--bunny-surface))",
+                  borderLeft: `3px solid ${on ? "light-dark(#2f80ed, hsl(214 35% 39%))" : "transparent"}`,
                   opacity: can ? 1 : 0.6,
                 }}
               >
@@ -409,7 +409,7 @@ export function ImportPicker({
                   <div data-testid="import-row-title" style={{ fontWeight: 600, whiteSpace: "normal", overflowWrap: "anywhere" }}>
                     {r.title || `agent ${r.id.slice(0, 8)}`}
                   </div>
-                  <div style={{ color: "#777", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <div style={{ color: "light-dark(#777, var(--bunny-muted))", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {r.host ? `Remote · ${r.host}` : "Local · this host"} · {r.workspaceName ?? "no workspace"} · {r.model ? `${r.provider}/${r.model}` : r.provider} · {STATUS_WORD[r.status] ?? r.status}
                     {r.needsAttention && r.status === "idle" ? ` · ${r.attention === "finished" ? "unread reply" : (r.attention ?? "attention")}` : ""} · {relTime(r.lastActivityAt)}
                     {r.archived ? " · archived" : ""}
@@ -437,22 +437,22 @@ export function ImportPicker({
             );
           })}
           {data && !directory.ended && !firstSnapshotPending ? <button type="button" data-testid="picker-load-more" disabled={directory.moreBusy || asking} onClick={() => void directory.loadMore()} style={{ ...chip(false), margin: 12 }}>{directory.moreBusy ? "Loading older matches…" : directory.scan ? "Scan next page (up to 200 conversations)" : "Load next 200 matches"}</button> : null}
-          {directory.error ? <div role="alert" data-testid="picker-page-error" style={{ padding: 12, color: "#b00" }}>{source === "remote" ? "Remote directory check stopped. Retry to check again. " : ""}{directory.error} <button type="button" onClick={directory.retry}>Retry</button></div> : null}
+          {directory.error ? <div role="alert" data-testid="picker-page-error" style={{ padding: 12, color: "light-dark(#b00, hsl(0 88% 74%))" }}>{source === "remote" ? "Remote directory check stopped. Retry to check again. " : ""}{directory.error} <button type="button" onClick={directory.retry}>Retry</button></div> : null}
           {data && scanAvailable && source === "local" && !directory.scan ? <button type="button" data-testid="picker-scan" disabled={directory.moreBusy} onClick={() => void directory.startScan()} style={{...chip(false),margin:12}}>Scan full directory beyond cached results</button> : null}
           {directory.scan ? <div data-testid="picker-scan-status" style={{padding:12}}>Native scan: {directory.scanned} examined · {rows.length} unique matches loaded · {directory.ended ? "scan complete" : "more pages may contain matches"}. Total unknown; page order is not a global sort. Previously loaded preview rows retained.</div> : null}
-          {data?.truncated ? <div data-testid="picker-server-cap" style={{ padding: 12, color: "#9c4b00" }}>Directory refresh reached its 10,000-row bound. Counts cover that cached prefix; older uncached work remains in Paseo.</div> : null}
+          {data?.truncated ? <div data-testid="picker-server-cap" style={{ padding: 12, color: "light-dark(#9c4b00, hsl(29 88% 74%))" }}>Directory refresh reached its 10,000-row bound. Counts cover that cached prefix; older uncached work remains in Paseo.</div> : null}
           {data && !directory.scan && directory.ended && rows.length < data.matched ? <div style={{ padding: 12 }}>Matches moved while paging. Refresh to reconcile the list.</div> : null}
-          {data ? <div style={{ padding: 12, fontSize: 11, color: "#666" }}>{directory.scan ? "Live pages can shift as conversations change." : "Recent-first cached pages. New activity can shift page boundaries."} <button type="button" data-testid="picker-refresh" onClick={directory.refresh}>Refresh list</button></div> : null}
+          {data ? <div style={{ padding: 12, fontSize: 11, color: "light-dark(#666, var(--bunny-muted))" }}>{directory.scan ? "Live pages can shift as conversations change." : "Recent-first cached pages. New activity can shift page boundaries."} <button type="button" data-testid="picker-refresh" onClick={directory.refresh}>Refresh list</button></div> : null}
 
         </div>
-        <div style={{ padding: narrow ? "8px 12px calc(10px + env(safe-area-inset-bottom))" : "10px 14px", borderTop: "1px solid #eee", display: "flex", alignItems: "center", gap: narrow ? 8 : 10, flexWrap: "wrap", flexShrink: 0 }}>
-          <span data-testid="import-count" style={{ color: "#666", fontSize: 12, flex: 1, minWidth: narrow ? 0 : 200 }}>
+        <div style={{ padding: narrow ? "8px 12px calc(10px + env(safe-area-inset-bottom))" : "10px 14px", borderTop: "1px solid light-dark(#eee, var(--bunny-line))", display: "flex", alignItems: "center", gap: narrow ? 8 : 10, flexWrap: "wrap", flexShrink: 0 }}>
+          <span data-testid="import-count" style={{ color: "light-dark(#666, var(--bunny-muted))", fontSize: 12, flex: 1, minWidth: narrow ? 0 : 200 }}>
             {data ? firstSnapshotPending ? "Waiting for the first remote snapshot" : directory.scan ? `${rows.length} loaded · total unknown` : `${data.matched} of ${data.total} conversation${data.total === 1 ? "" : "s"}${data.matched > rows.length ? ` (first ${rows.length} shown)` : ""}` : ""}
             {single ? "" : ` · ${count} selected`}
             {narrow ? "" : single ? " · ↑↓ Enter to link · Esc" : " · ↑↓ Enter selects · ⌘↵ imports · Esc"}
           </span>
           {err ? (
-            <span data-testid="import-error" style={{ color: "#c00", fontSize: 12 }}>
+            <span data-testid="import-error" style={{ color: "light-dark(#c00, hsl(0 88% 74%))", fontSize: 12 }}>
               {err}
             </span>
           ) : null}
@@ -468,7 +468,7 @@ export function ImportPicker({
                 data-testid="import-go"
                 disabled={busy || !count}
                 onClick={importSelection}
-                style={{ padding: narrow ? "13px 14px" : "7px 14px", width: narrow ? "100%" : undefined, borderRadius: narrow ? 10 : 8, border: "1px solid #2f80ed", background: busy || !count ? "#9bbcf0" : "#2f80ed", color: "#fff", cursor: busy || !count ? "default" : "pointer", font: narrow ? "600 16px system-ui, sans-serif" : "13px system-ui, sans-serif" }}
+                style={{ padding: narrow ? "13px 14px" : "7px 14px", width: narrow ? "100%" : undefined, borderRadius: narrow ? 10 : 8, border: "1px solid light-dark(#2f80ed, hsl(214 35% 39%))", background: busy || !count ? "light-dark(#9bbcf0, hsl(217 45% 21%))" : "#2f80ed", color: "#fff", cursor: busy || !count ? "default" : "pointer", font: narrow ? "600 16px system-ui, sans-serif" : "13px system-ui, sans-serif" }}
               >
                 {busy ? "Importing…" : `Import ${count || ""} ${count === 1 ? "conversation" : "conversations"}`.replace("  ", " ")}
               </button>

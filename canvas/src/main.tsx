@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+import "./theme";
 import { createRoot } from "react-dom/client";
 import { ChecklistPreview } from "./components/checklist/Preview";
 import { App } from "./App";

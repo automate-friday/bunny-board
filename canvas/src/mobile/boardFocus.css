@@ -1,12 +1,12 @@
 /* "View full board" (BoardFocus.tsx): a quiet map button, and the outline of the frame you came from. */
 .bm-root .bm-fullboard {
   flex: none; width: 40px; height: 40px; padding: 0; display: grid; place-items: center; border-radius: 999px; cursor: pointer;
-  border: 1px solid var(--bm-line, rgba(46,31,22,.12)); background: #FFF8EBcc; color: rgba(46,31,22,.55); box-shadow: none;
+  border: 1px solid var(--bm-line, light-dark(rgba(46,31,22,.12), color-mix(in srgb, hsl(23 35% 39%) 12%, transparent))); background: light-dark(#FFF8EBcc, color-mix(in srgb, #20242c 80%, transparent)); color: light-dark(rgba(46,31,22,.55), color-mix(in srgb, #edf0f7 55%, transparent)); box-shadow: none;
 }
 .bm-root .bm-fullboard svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.bm-root .bm-fullboard:active { background: #EFE8FE; color: #6F5CE6; }
-.bm-focus-outline { position: absolute; z-index: 300; box-sizing: border-box; border: 3px solid #8875F6; border-radius: 8px; box-shadow: 0 0 0 4px rgba(136,117,246,.18); pointer-events: none; }
-.bm-backframe { flex: 0 1 auto; min-width: 0; max-width: 55vw; min-height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid #2E1F16; background: #2E1F16; color: #FFF8EB !important; font: 600 14px Inter, system-ui, sans-serif !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.bm-root .bm-fullboard:active { background: light-dark(#EFE8FE, hsl(259 45% 21%)); color: light-dark(#6F5CE6, hsl(248 73% 74%)); }
+.bm-focus-outline { position: absolute; z-index: 300; box-sizing: border-box; border: 3px solid light-dark(#8875F6, hsl(249 35% 39%)); border-radius: 8px; box-shadow: 0 0 0 4px rgba(136,117,246,.18); pointer-events: none; }
+.bm-backframe { flex: 0 1 auto; min-width: 0; max-width: 55vw; min-height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid light-dark(#2E1F16, hsl(23 35% 39%)); background: #2E1F16; color: #FFF8EB !important; font: 600 14px Inter, system-ui, sans-serif !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 /* The highlight fades after a moment; neither it nor the label ever takes a touch (the board
    view under them is live: pan, pinch, tap a frame). */
 .bm-focus-outline { animation: bm-focus-fade 3.2s ease-out forwards; }

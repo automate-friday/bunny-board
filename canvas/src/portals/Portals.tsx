@@ -6,10 +6,13 @@
 // pill returns to exactly where you were, through a stack of jumps. Hovering the button
 // rings the destination. Only one rift is open at a time, and it is view state only: a DOM overlay,
 // never a shape, so it is not saved, synced or counted as overlap.
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { atom, Box, type Editor, getColorValue, type TLShape, type TLShapeId, type TLAnyShapeUtilConstructor, useValue } from "tldraw";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { atom, Box, type Editor, getColorValue, react, type TLEventInfo, type TLShape, type TLShapeId, type TLAnyShapeUtilConstructor, useValue } from "tldraw";
 import { isAreaPortal, type PortalTarget, portalOf } from "../../../shared/portal";
 import { PortalRift } from "./PortalRift";
+import { PortalIcon } from "./icons";
+import { PortalToolOverlay } from "./PortalTool";
 import "./portals.css";
 
 type Cam = { x: number; y: number; z: number };
@@ -19,12 +22,36 @@ const portalFlash = atom<{ box: { x: number; y: number; w: number; h: number }; 
 const portalHover = atom<string | null>("portal-hover", null);
 
 const ANIM = { animation: { duration: 420 } };
+// The Back pill goes away when it is no longer the way back: when the person moves the
+// camera themselves, after BACK_IDLE_MS with no input, or with its ×. Camera moves inside
+// this window after a jump or Back are the portal's own animation, not the person's.
+let selfMoveUntil = 0;
+const selfMove = () => {
+  selfMoveUntil = Date.now() + ANIM.animation.duration + 250;
+};
+export const BACK_IDLE_MS = 20_000;
+export function clearBack(): void {
+  if (portalBack.get().length) portalBack.set([]);
+}
 
 /** Page bounds of a portal's target, or null when the target shape is gone. */
 export function portalBounds(editor: Editor, p: PortalTarget): Box | null {
   if (isAreaPortal(p)) return new Box(p.x, p.y, p.w, p.h);
   const s = editor.getShape(p.id as TLShapeId);
   return s ? (editor.getShapePageBounds(s.id) ?? null) : null;
+}
+
+/**
+ * The sticky's portal if it can be followed: an area portal, or a shape portal whose
+ * target is on the board. A portal to a deleted shape reads as none here (no button, no
+ * opening, no jump), but meta.portal is kept, so undoing the delete brings it back.
+ * Reactive: read inside useValue, it re-runs when the target appears or goes.
+ */
+export function livePortal(editor: Editor, note: TLShape | undefined): PortalTarget | null {
+  const p = portalOf(note);
+  if (!p) return null;
+  if (isAreaPortal(p)) return p;
+  return editor.getShape(p.id as TLShapeId) ? p : null;
 }
 
 function textOf(s: TLShape | undefined): string {
@@ -80,16 +107,25 @@ export function portalColor(editor: Editor, note: TLShape | undefined): string {
 /** Jump the camera to the portal's target, remembering where we were. */
 export function jumpThrough(editor: Editor, noteId: string): boolean {
   const note = editor.getShape(noteId as TLShapeId);
-  const p = portalOf(note);
+  const p = livePortal(editor, note);
   const b = p && portalBounds(editor, p);
   if (!b) return false;
   const cam = editor.getCamera();
   portalBack.set([...portalBack.get(), { cam: { x: cam.x, y: cam.y, z: cam.z }, from: noteId }].slice(-20));
   portalOpen.set(null);
   portalHover.set(null);
+  selfMove();
   editor.zoomToBounds(b, { ...ANIM, inset: 80, targetZoom: 1 });
   portalFlash.set({ box: { x: b.x, y: b.y, w: b.w, h: b.h }, at: Date.now(), color: portalColor(editor, note) });
   return true;
+}
+
+/** Ring the portal's destination for a moment (after a person makes a portal). */
+export function flashTarget(editor: Editor, noteId: string): void {
+  const note = editor.getShape(noteId as TLShapeId);
+  const p = livePortal(editor, note);
+  const b = p && portalBounds(editor, p);
+  if (b) portalFlash.set({ box: { x: b.x, y: b.y, w: b.w, h: b.h }, at: Date.now(), color: portalColor(editor, note) });
 }
 
 export function jumpBack(editor: Editor): void {
@@ -97,6 +133,7 @@ export function jumpBack(editor: Editor): void {
   const last = stack[stack.length - 1];
   if (!last) return;
   portalBack.set(stack.slice(0, -1));
+  selfMove();
   editor.setCamera(last.cam, ANIM);
 }
 
@@ -106,15 +143,7 @@ const Icon = ({ d, size = 14 }: { d: React.ReactNode; size?: number }) => (
     {d}
   </svg>
 );
-/** A portal swirl: three arms spiralling into a bright core. */
-export const PortalIcon = ({ size = 20 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true" className="bunny-portal-swirl">
-    <path d="M12 12c0-2.4 1.9-4 4.2-3.6 2.8.5 4 3.6 2.8 6.4-1.6 3.6-6.2 4.9-9.8 3.2" />
-    <path d="M12 12c2.1 1.2 2.6 3.6 1.1 5.4-1.8 2.2-5.1 2.1-7.3-.1-2.8-2.8-2.3-7.5.9-10" />
-    <path d="M12 12c-2.1-1.2-2.4-3.7-.6-5.3 2.1-1.9 5.4-1.4 7.2 1.1" opacity="0.7" />
-    <circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none" />
-  </svg>
-);
+export { PortalIcon } from "./icons";
 const BackIcon = () => <Icon d={<path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />} />;
 
 // --- badges on stickies -------------------------------------------------------------------
@@ -130,7 +159,7 @@ function useBadges(editor: Editor): Badge[] {
       const z = editor.getZoomLevel();
       const out: Badge[] = [];
       for (const s of editor.getCurrentPageShapes()) {
-        const p = portalOf(s);
+        const p = livePortal(editor, s);
         if (!p) continue;
         const b = editor.getShapePageBounds(s.id);
         if (!b || !b.collides(vp) || b.w * z < 60) continue;
@@ -192,8 +221,8 @@ export function Portals({ editor, toast, rift }: { editor: Editor; toast(text: s
   const back = useValue(portalBack);
   const flash = useValue(portalFlash);
   const hover = useValue(portalHover);
-  // The open rift's sticky was deleted or lost its portal: close it.
-  const openExists = useValue("portal-open-exists", () => (open ? !!portalOf(editor.getShape(open as TLShapeId)) : true), [editor, open]);
+  // The open rift's sticky, its portal or its target was deleted: close it.
+  const openExists = useValue("portal-open-exists", () => (open ? !!livePortal(editor, editor.getShape(open as TLShapeId)) : true), [editor, open]);
   useEffect(() => {
     if (!openExists) portalOpen.set(null);
   }, [openExists]);
@@ -210,10 +239,45 @@ export function Portals({ editor, toast, rift }: { editor: Editor; toast(text: s
     if (id && !jumpThrough(editor, id)) toast("This portal's target was deleted");
   }, [editor, toast]);
   const onClose = useCallback(() => portalOpen.set(null), []);
+  // While the Back pill shows: the person's own pan or zoom, or BACK_IDLE_MS without
+  // input, dismisses it (it would otherwise linger after they have moved on).
+  const hasBack = back.length > 0;
+  useEffect(() => {
+    if (!hasBack) return;
+    let idle = setTimeout(clearBack, BACK_IDLE_MS);
+    const touch = () => {
+      clearTimeout(idle);
+      idle = setTimeout(clearBack, BACK_IDLE_MS);
+    };
+    const onInput = (info: TLEventInfo) => {
+      if (info.type === "keyboard" || (info.type === "pointer" && info.name === "pointer_down")) touch();
+    };
+    editor.on("event", onInput);
+    // Stepping back resets the clock too.
+    const stopStack = react("portal-back-stack", () => {
+      portalBack.get();
+      touch();
+    });
+    let first = true;
+    const stopCamera = react("portal-back-camera", () => {
+      editor.getCamera();
+      if (first) {
+        first = false;
+        return;
+      }
+      if (Date.now() > selfMoveUntil) clearBack();
+    });
+    return () => {
+      clearTimeout(idle);
+      editor.off("event", onInput);
+      stopStack();
+      stopCamera();
+    };
+  }, [editor, hasBack]);
   // The portal's editor is built once, ahead of time: when the board idles after a portal
   // sticky shows up (or at the latest on the first open), then kept mounted and reused.
   const [warm, setWarm] = useState(false);
-  const anyPortal = useValue("portal-any", () => editor.getCurrentPageShapes().some((s) => !!portalOf(s)), [editor]);
+  const anyPortal = useValue("portal-any", () => editor.getCurrentPageShapes().some((s) => !!livePortal(editor, s)), [editor]);
   useEffect(() => {
     if (warm) return;
     if (open) return setWarm(true);
@@ -228,30 +292,53 @@ export function Portals({ editor, toast, rift }: { editor: Editor; toast(text: s
   }, [warm, open, anyPortal]);
   const lastFrom = back.length ? editor.getShape(back[back.length - 1].from as TLShapeId) : undefined;
   const hoverNote = hover ? editor.getShape(hover as TLShapeId) : undefined;
-  const hoverPortal = portalOf(hoverNote);
+  const hoverPortal = livePortal(editor, hoverNote);
   const hoverBox = hoverPortal ? portalBounds(editor, hoverPortal) : null;
-  return (
+  // Portal UI lives in its own layer above every board shape (tldraw's in-front layer
+  // sits under the shapes layer, so a shape's text label could cover "Jump there"),
+  // yet under tldraw's own menus and panels.
+  const layer = usePortalLayer(editor);
+  if (!layer) return null;
+  return createPortal(
     <>
       <PortalBadges editor={editor} />
       {warm ? <PortalRift board={editor} noteId={open && openExists ? open : null} onJump={onJump} onClose={onClose} toast={toast} shapeUtils={rift.shapeUtils} /> : null}
       {back.length ? (
-        <button
-          type="button"
-          className="bunny-portal-back"
-          data-testid="portal-back"
-          style={tint(portalColor(editor, lastFrom))}
-          onPointerDown={stop}
-          onClick={() => jumpBack(editor)}
-          title="Return to where you jumped from"
-        >
-          <BackIcon /> Back{lastFrom ? ` to “${short(textOf(lastFrom), 24)}”` : ""}
-          {back.length > 1 ? <span className="bunny-portal-depth">{back.length}</span> : null}
-        </button>
+        <div className="bunny-portal-back" data-testid="portal-back-pill" style={tint(portalColor(editor, lastFrom))} onPointerDown={stop}>
+          <button type="button" className="bunny-portal-back-go" data-testid="portal-back" onClick={() => jumpBack(editor)} title="Return to where you jumped from">
+            <BackIcon /> Back{lastFrom ? ` to “${short(textOf(lastFrom), 24)}”` : ""}
+            {back.length > 1 ? <span className="bunny-portal-depth">{back.length}</span> : null}
+          </button>
+          <button type="button" className="bunny-portal-back-x" data-testid="portal-back-close" onClick={clearBack} title="Dismiss" aria-label="Dismiss">
+            ×
+          </button>
+        </div>
       ) : null}
       {hoverBox && hover !== open ? <PortalRing editor={editor} box={hoverBox} color={portalColor(editor, hoverNote)} testId="portal-hover-ring" /> : null}
       {flash ? <PortalFlash editor={editor} flash={flash} /> : null}
-    </>
+      <PortalToolOverlay editor={editor} />
+    </>,
+    layer,
   );
+}
+
+/** A layer in the editor container, just before tldraw's UI: same z-index as the shapes
+ *  layer but later in the DOM, so it paints and takes pointers above every shape, and
+ *  tldraw's UI (later still) stays above it. */
+function usePortalLayer(editor: Editor): HTMLElement | null {
+  const [layer, setLayer] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const host = editor.getContainer();
+    const el = document.createElement("div");
+    el.className = "bunny-portal-layer";
+    host.insertBefore(el, host.querySelector(":scope > .tlui-layout"));
+    setLayer(el);
+    return () => {
+      el.remove();
+      setLayer(null);
+    };
+  }, [editor]);
+  return layer;
 }
 
 // A ring in the portal's colour round its destination (page box → screen).

@@ -7,7 +7,9 @@ export async function readAgentCapabilities(agentId: string, signal?: AbortSigna
   if (result.agentId !== agentId || !result.capabilities) throw Error("Agent controls could not be verified.");
   return result.capabilities;
 }
-export function useAgentCapabilities(agentId?: string, bindingKey?: string) {
+// starting: the frame's start is still pending, so a refusal means "not created yet":
+// ask again every few seconds instead of every 30 s (the sidebar does not show it as an error).
+export function useAgentCapabilities(agentId?: string, bindingKey?: string, starting = false) {
   const [state, setState] = useState<{ id?: string; key?: string; value: AgentCapabilities | null; error: string | null }>({ value: null, error: null });
   const [revision, setRevision] = useState(0);
   useEffect(() => {
@@ -17,10 +19,10 @@ export function useAgentCapabilities(agentId?: string, bindingKey?: string) {
       try { const value = await readAgentCapabilities(agentId, ctl.signal); if (!ctl.signal.aborted) setState({ id: agentId, key: bindingKey, value, error: null }); }
       // A failed refresh keeps the last known capabilities (a slow host should not disable the reply box).
       catch (e) { if (!ctl.signal.aborted) setState((s) => ({ id: agentId, key: bindingKey, value: s.id === agentId && s.key === bindingKey ? s.value : null, error: (e as Error).message })); }
-      finally { if (!ctl.signal.aborted) timer = setTimeout(() => void load(), 30000); }
+      finally { if (!ctl.signal.aborted) timer = setTimeout(() => void load(), starting ? 3000 : 30000); }
     };
     void load(); return () => { ctl.abort(); clearTimeout(timer); };
-  }, [agentId, bindingKey, revision]);
+  }, [agentId, bindingKey, revision, starting]);
   const current = state.id === agentId && state.key === bindingKey ? state : null;
   return { value: current?.value ?? null, error: current?.error ?? null, can: (op: AgentOperation) => current?.value?.[op] === true, retry: () => setRevision(n => n + 1) };
 }

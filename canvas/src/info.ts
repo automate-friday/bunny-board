@@ -12,6 +12,8 @@ export interface BoardInfo {
   cloudDefault?: boolean;
   runtimeHostname?: string;
   boardHostname?: string;
+  // The machine the board's Paseo daemon reports (where local agents really run).
+  agentMachine?: string | null;
   machine?: string;
   paseoServerId?: string | null;
   paseoServerIds?: Record<string, string>;

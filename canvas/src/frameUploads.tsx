@@ -130,7 +130,7 @@ export function FrameUploadReceipts({ boardId, frameId, compact = false }: { boa
     {current.map(u => {
       const info = u.receipt ? statusInfo[u.receipt.status] : null;
       const uploading = !u.receipt && u.busy;
-      return <div key={u.id} data-upload-id={u.id} data-upload-status={u.receipt?.status ?? (u.error ? "error" : "uploading")} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 10px 6px", background: "#fff", border: `1px solid ${B.line}`, borderRadius: 12 }}>
+      return <div key={u.id} data-upload-id={u.id} data-upload-status={u.receipt?.status ?? (u.error ? "error" : "uploading")} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 10px 6px", background: "light-dark(#fff, var(--bunny-surface))", border: `1px solid ${B.line}`, borderRadius: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
           <div style={nameText} title={u.name}>{u.name}</div>
           {info ? <StatusChip tone={info.tone}>{info.chip}</StatusChip> : uploading ? <StatusChip tone="violet">{u.recovering ? "Checking" : "Uploading"}</StatusChip> : u.error ? <StatusChip tone="danger">Not sent</StatusChip> : null}

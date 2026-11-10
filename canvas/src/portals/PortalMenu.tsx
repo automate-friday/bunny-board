@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { type Editor, type TLArrowBinding, type TLArrowShape, type TLShape, type TLShapeId, TldrawUiMenuItem, useEditor } from "tldraw";
 import { type PortalTarget, portalOf } from "../../../shared/portal";
-import { jumpThrough } from "./Portals";
+import { jumpThrough, livePortal } from "./Portals";
 
 /** For an arrow that starts on a sticky: that sticky and the portal its end describes. */
 export function arrowPortal(editor: Editor, shape: TLShape | undefined): { noteId: TLShapeId; arrowId: TLShapeId; portal: PortalTarget } | null {
@@ -34,7 +34,9 @@ export function PortalMenuItems() {
   // Fixed when the menu opens (right click selects what is under the pointer).
   const [sel] = useState(() => editor.getOnlySelectedShape() ?? undefined);
   const [make] = useState(() => arrowPortal(editor, sel));
+  // "Remove portal" also for a portal whose target was deleted; jumping needs the target.
   const has = sel && portalOf(sel) ? sel.id : null;
+  const live = sel && livePortal(editor, sel) ? sel.id : null;
   return (
     <>
       {make ? (
@@ -50,8 +52,8 @@ export function PortalMenuItems() {
           }}
         />
       ) : null}
-      {has ? <TldrawUiMenuItem id="bunny-jump-portal" label="Jump through portal" onSelect={() => {
-            jumpThrough(editor, has);
+      {live ? <TldrawUiMenuItem id="bunny-jump-portal" label="Jump through portal" onSelect={() => {
+            jumpThrough(editor, live);
           }} /> : null}
       {has ? <TldrawUiMenuItem id="bunny-remove-portal" label="Remove portal" onSelect={() => setPortal(editor, has, null)} /> : null}
     </>

@@ -6,7 +6,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { B, BUNNY_CONTROLS_CSS, UI_FONT, chip, primaryBtn } from "./bunnyTheme";
 
 export const UPLOAD_UI_CSS = `${BUNNY_CONTROLS_CSS}
-.bunny-fp input.bup-input { font: 13px ${UI_FONT}; color: ${B.espresso}; background: #fff; border: 1px solid ${B.line}; border-radius: 10px; padding: 7px 10px; width: 100%; box-sizing: border-box; }
+.bunny-fp input.bup-input { font: 13px ${UI_FONT}; color: ${B.espresso}; background: light-dark(#fff, var(--bunny-surface)); border: 1px solid ${B.line}; border-radius: 10px; padding: 7px 10px; width: 100%; box-sizing: border-box; }
 .bunny-fp input.bup-input::placeholder { color: ${B.muted}; }
 .bunny-fp input.bup-input:focus-visible { outline: 2px solid ${B.violet}; outline-offset: 1px; border-color: ${B.violet}; }
 .bunny-fp input.bup-input:disabled { background: ${B.hover}; }
@@ -18,8 +18,8 @@ export const UPLOAD_UI_CSS = `${BUNNY_CONTROLS_CSS}
 export type Tone = "violet" | "green" | "golden" | "danger" | "muted";
 const TONE: Record<Tone, { fg: string; bg: string; bar: string }> = {
   violet: { fg: B.violetDeep, bg: B.lavenderSoft, bar: B.violet },
-  green: { fg: "#23704A", bg: "#E3F4EA", bar: "#3FA66A" },
-  golden: { fg: "#8A5A00", bg: "#FFF1CF", bar: B.golden },
+  green: { fg: "light-dark(#23704A, hsl(150 52% 74%))", bg: "light-dark(#E3F4EA, var(--bunny-raised))", bar: "#3FA66A" },
+  golden: { fg: "light-dark(#8A5A00, hsl(39 88% 74%))", bg: "light-dark(#FFF1CF, hsl(43 45% 21%))", bar: B.golden },
   danger: { fg: B.danger, bg: B.peachSoft, bar: B.orange },
   muted: { fg: B.muted, bg: B.hover, bar: "#B9AEA6" },
 };

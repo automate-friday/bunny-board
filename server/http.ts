@@ -1,3 +1,6 @@
+import {WorkerSettingsLive,workerSettingsRuntime} from '../tools/upstash/settings.mjs';
+import {upstashDefault} from '../shared/conversation-links';
+import { startFrame } from "./frame-start";
 import type { BoardSnapshots } from "./board-snapshots";
 import { imageVariant } from "./image-variants";
 import { resolvePaseoServerId } from "./paseo-identity";
@@ -13,6 +16,7 @@ import {agentCapabilities} from "./agent-capabilities";
 import {resolveBoardName} from "./board-resolve";
 import type {FrameUploads} from "./frame-uploads";
 import {timelinePage,timelineRow} from "./timeline-pages";
+import { lastHumanMessage, type LastSent } from "../shared/last-message";
 import {bundleFilePath} from "./artifact-bundle";
 import { MAX_IMAGE_BYTES, persistImage, readImageUpload } from './file-intake';
 import { transientDaemonError, withDaemonRead } from './daemon-health';
@@ -28,6 +32,7 @@ import { checkBackupToken, FLUSH_PATH, flushForBackup, isLoopback } from "./back
 import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 import { WebSocketServer } from "ws";
 import { type AgentApi, InputError, ScopeError, safeFileName } from "./agent-api";
 import type { WidgetHub } from "./widgets";
@@ -116,6 +121,11 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 // Browsers send Origin on websocket upgrades and cross-site requests. Only the
 // board's own origins may open the room or use the UI API; non-browser callers
 // (no Origin header) are allowed, which keeps the tailnet-only posture explicit.
+// The agent summary's lastUserMessage (no row index: the client has its own rows).
+function summaryOf(m: LastSent | null): { text: string; at: string; images: number; files: number } | null {
+  return m ? { text: m.text, at: m.at, images: m.images, files: m.files } : null;
+}
+
 function originAllowed(cfg: BoardConfig, req: IncomingMessage): boolean {
   const origin = req.headers.origin;
   return !origin || cfg.allowedOrigins.includes(origin);
@@ -170,7 +180,8 @@ export function startHttp(opts: {
   const clientErrors: { at: string; where: string; message: string; stack: string; ua: string; url: string }[] = [];
   const paseoServerId = () => resolvePaseoServerId(cfg.paseoServerId, bridge.aux);
   const paseoUrl = (agentId: string) => {
-    const id = paseoServerId();
+    const remoteHost = watcher.remoteHostOf(agentId);
+    const id = remoteHost ? remote?.paseoServerIds[remoteHost] : paseoServerId();
     return id ? `paseo://h/${encodeURIComponent(id)}/agent/${encodeURIComponent(agentId)}` : null;
   };
   let sseClients = 0;
@@ -182,7 +193,8 @@ export function startHttp(opts: {
     return Promise.reject(e);
   }
   log(auth ? "basic auth on: browser, UI API, assets and websocket need credentials" : "basic auth off (tailnet-only; see docs/AUTH.md)");
-  const wss = new WebSocketServer({ noServer: true });
+  // Browsers negotiate permessage-deflate: the main board's 1.7 MB connect frame is ~0.37 MB deflated.
+  const wss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
   const seenCallers = new Set<string>();
 
   async function handleAgent(req: IncomingMessage, res: ServerResponse, m: RegExpMatchArray): Promise<void> {
@@ -207,7 +219,7 @@ export function startHttp(opts: {
     const body = req.method === "GET" ? Object.fromEntries(new URL(req.url ?? "", "http://x").searchParams) : await readBody(req);
     // biome-ignore lint/suspicious/noExplicitAny: validated inside AgentApi.
     const b = body as any;
-    if (room.records.get(frameId)?.meta?.paseo?.compression?.status === "pending" && !["read","write","comment"].includes(op)) throw new InputError("Compression pending: submit the requested summary without resizing or adding other content");
+    if (room.records.get(frameId)?.meta?.paseo?.compression?.status === "pending" && !["read","read-image","write","comment"].includes(op)) throw new InputError("Compression pending: submit the requested summary without resizing or adding other content");
     let out: unknown;
     if (op === 'channel' && channels) {
       if (body.action==='list') out={channels:channels.list(boardId).filter(c=>c.active&&c.members.some(m=>m.frame===frameId))};
@@ -216,6 +228,7 @@ export function startHttp(opts: {
     }
     else if (op === "video" && video) out = video.action(room, frameId, body);
     else if (op === "read") out = await agentApi.read(room, frameId, b);
+    else if (op === "read-image") out = await agentApi.readImage(room, frameId, b);
     else if (op === "pin") out = await agentApi.pin(room, frameId, b);
     else if (op === "cloud") out = agentApi.cloud(room, frameId, b);
     else if (op === "write") out = agentApi.write(room, frameId, b);
@@ -249,10 +262,11 @@ export function startHttp(opts: {
   // --- Paseo parity: agent controls and image files (server/agent-controls.ts) -------
   // Provider catalogues per cwd, for the model and thinking pickers.
   // ponytail: one-minute cache for at most 50 cwds, oldest evicted; shorten it if stale model lists show up.
-  const providerCache = new Map<string, { at: number; entries: unknown[] }>();
-  async function providerEntries(cwd: string): Promise<unknown[] | null> {
-    const aux = bridge.aux;
+  const providerCaches = new WeakMap<object, Map<string, { at: number; entries: unknown[] }>>();
+  async function providerEntries(cwd: string, aux = bridge.aux): Promise<unknown[] | null> {
     if (!aux) return null;
+    let providerCache = providerCaches.get(aux);
+    if (!providerCache) { providerCache = new Map(); providerCaches.set(aux, providerCache); }
     let hit = providerCache.get(cwd);
     // Harnesses still loading their model lists are asked again after a few seconds.
     const loading = hit?.entries.some((x) => (x as { status?: string }).status === "loading");
@@ -269,19 +283,19 @@ export function startHttp(opts: {
     }
     return hit.entries;
   }
-  async function providerEntry(cwd: string, provider: string): Promise<unknown | null> {
-    return (await providerEntries(cwd))?.find((x) => (x as { provider?: string }).provider === provider) ?? null;
+  async function providerEntry(cwd: string, provider: string, aux = bridge.aux): Promise<unknown | null> {
+    return (await providerEntries(cwd, aux))?.find((x) => (x as { provider?: string }).provider === provider) ?? null;
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: PaseoAgentHandle from the SDK.
-  async function handleControls(req: IncomingMessage, res: ServerResponse, url: URL, ref: any, agentId: string, route: string): Promise<boolean> {
+  async function handleControls(req: IncomingMessage, res: ServerResponse, url: URL, ref: any, agentId: string, route: string, controlAux = bridge.aux): Promise<boolean> {
     const isGet = route === "/files" || route === "/controls";
     if (isGet && req.method !== "GET") return send(res, 405, { error: "GET required" }), true;
     if (!isGet) {
       if (req.method !== "POST") return send(res, 405, { error: "POST required" }), true;
       if (!/^application\/json\b/i.test(String(req.headers["content-type"] ?? ""))) return send(res, 415, { error: "content-type must be application/json" }), true;
     }
-    const aux = bridge.aux;
+    const aux = controlAux;
     if (!aux) return send(res, 503, { error: "Paseo daemon connection not ready" }), true;
     const fresh = await withDaemonRead(() => ref.refresh()).catch((e: Error & { status?: number }) => {
       if (e.status === 503) throw e;
@@ -303,7 +317,7 @@ export function startHttp(opts: {
       return true;
     }
     if (route === "/controls") {
-      const entry = await providerEntry(String(agent.cwd ?? ""), String(agent.provider ?? ""));
+      const entry = await providerEntry(String(agent.cwd ?? ""), String(agent.provider ?? ""), controlAux);
       send(res, 200, buildControls(agent, entry, { bound: watcher.isBoundAgent(agentId), connected: !!aux.isConnected }));
       return true;
     }
@@ -342,6 +356,11 @@ export function startHttp(opts: {
     const p = url.pathname;
     if (!originAllowed(cfg, req)) {
       send(res, 403, { error: `origin ${req.headers.origin} is not allowed` });
+      return true;
+    }
+    if (p === "/api/ui/frames/start") {
+      if (req.method !== "POST") { send(res, 405, {error:"POST required"}); return true; }
+      send(res, 202, startFrame(host, watcher, await readBody(req)));
       return true;
     }
     // Client perf reports (?perf=1 / ?perf=report): POST …/perf/client, GET …/perf/clients.
@@ -501,8 +520,20 @@ export function startHttp(opts: {
       return true;
     }
     if(p==='/api/ui/health'){send(res,200,bridge.health());return true;}
+    if (p === "/api/ui/worker-settings") {
+      const file=process.env.BUNNY_UPSTASH_SETTINGS;
+      if(!file){send(res,404,{error:"Worker settings are unavailable on this host"});return true;}
+      const settings=workerSettingsRuntime(WorkerSettingsLive(file));
+      try {
+        if(req.method==='GET')send(res,200,await settings.read());
+        else if(req.method==='PUT')send(res,200,await settings.save(await readBody(req)));
+        else send(res,405,{error:'GET or PUT required'});
+      }catch(error){send(res,400,{error:(error as Error).message});}
+      return true;
+    }
     if (p === "/api/ui/info") {
       send(res, 200, {
+        workerSettings: !!process.env.BUNNY_UPSTASH_SETTINGS,
         publicBase: cfg.publicBase,
         defaultProvider: cfg.defaultProvider,
         promptReceipts: !!prompts,
@@ -534,7 +565,9 @@ export function startHttp(opts: {
     }
     if (p === "/api/ui/start-options") {
       const entries = await providerEntries(cfg.defaultCwd).catch(() => null);
-      const catalogue = entries ? startCatalogue(entries, cfg.defaultProvider) : null;
+      const workerEntries = upstashDefault(cfg) ? entries?.filter((e: any) => /^upstash-(codex|claude)$/.test(e.provider)) : entries;
+      const catalogue = workerEntries ? startCatalogue(workerEntries, cfg.defaultProvider) : null;
+      if (catalogue && upstashDefault(cfg)) for (const harness of catalogue.harnesses) harness.label = harness.label.replace(/^Upstash /, "");
       send(res, 200, catalogue?.harnesses.length ? catalogue : fallbackCatalogue(cfg.defaultProvider, entries ? "Paseo reported no harnesses" : "Paseo's model list is not available right now"));
       return true;
     }
@@ -866,7 +899,8 @@ export function startHttp(opts: {
     if(promptRoute && prompts) {
       const agentId=decodeURIComponent(promptRoute[1]);
       const bound=watcher.boundRef(agentId);
-      if(!bound||!watcher.isBoundAgent(agentId))return send(res,403,{error:"Conversation is no longer bound to this board frame"}),true;
+      // A frame whose start is still pending takes replies too: they wait for the start.
+      if(!bound||!(watcher.isBoundAgent(agentId)||watcher.startPendingFor(agentId)))return send(res,403,{error:"Conversation is no longer bound to this board frame"}),true;
       let receipt;
       if(promptRoute[2]==="prompt" && req.method==="POST") {
         const body=await readBody(req);
@@ -874,7 +908,9 @@ export function startHttp(opts: {
         receipt=prompts.submit({messageId:body.messageId,agentId,host:watcher.remoteHostOf(agentId),boardId:bound.boardId,frameId:bound.frameId,text:String(body.text??"").trim(),...(typeof body.prev==="string"?{prev:body.prev}:{})});
         void prompts.drain();
       } else if(promptRoute[3] && req.method==="GET")receipt=prompts.get(agentId,promptRoute[3]);
-      else return send(res,405,{error:"Use POST prompt or GET prompt receipt"}),true;
+      // DELETE: take back a queued reply that has not gone out yet (Edit / Remove in the box).
+      else if(promptRoute[3] && req.method==="DELETE")receipt=prompts.withdraw(agentId,promptRoute[3]);
+      else return send(res,405,{error:"Use POST prompt, GET prompt receipt or DELETE a queued prompt"}),true;
       // ok only once the agent's timeline shows the prompt; accepted is still being checked.
       const ok=receipt.status==="delivered";
       // final: nothing more will be learned. An unknown one is unconfirmed (may have
@@ -891,7 +927,11 @@ export function startHttp(opts: {
       if(!watcher.isVisibleAgent(agentId))return send(res,403,{error:`agent ${agentId} is not bound to a board frame`}),true;
       if(req.method!=="GET")return send(res,405,{error:"GET required"}),true;
       const binding=watcher.boundRef(agentId);
-      send(res,200,{agentId,capabilities:agentCapabilities(watcher.remoteHostOf(agentId),watcher.isBoundAgent(agentId),{paseoServerId:watcher.remoteHostOf(agentId)?remote?.paseoServerIds[watcher.remoteHostOf(agentId)!]:paseoServerId(),linked:binding?host.peek(binding.boardId)?.get(binding.frameId)?.meta?.paseo?.linked===true:false})});
+      // A pending remote start is not bound yet: its frame names the host.
+      const frameHost=(binding?host.peek(binding.boardId)?.get(binding.frameId)?.meta?.paseo?.host:null)??null;
+      const targetHost = watcher.remoteHostOf(agentId) ?? frameHost;
+      const native = targetHost ? await remote?.nativeSession(targetHost).catch(() => null) : null;
+      send(res,200,{agentId,starting:watcher.startPendingFor(agentId),capabilities:agentCapabilities(targetHost,watcher.isBoundAgent(agentId)||watcher.startPendingFor(agentId),{paseoServerId:targetHost?remote?.paseoServerIds[targetHost]:paseoServerId(),linked:binding?host.peek(binding.boardId)?.get(binding.frameId)?.meta?.paseo?.linked===true:false,remoteNative:!!native,remoteStop:!!targetHost&&!!remote?.canCancel(targetHost)})});
       return true;
     }
     const api = bridge.api;
@@ -919,6 +959,7 @@ export function startHttp(opts: {
           statuses: (sp.get("status") ?? "").split(",").filter((x) => ["running", "idle", "attention"].includes(x)),
           workspaceId: scope === "board" ? (boardWs ?? "(this board has no workspace yet)") : undefined,
           includeBound: sp.get("bound") === "1",
+          boundBoardId: sp.get("onBoard") === "1" ? (boardId ?? "") : undefined,
           includeArchived: sp.get("archived") === "1",
           offset: Number(sp.get("offset") ?? 0) || 0, limit: Number(sp.get("limit") ?? 200) || 200,
         },
@@ -955,10 +996,11 @@ export function startHttp(opts: {
     // A bound agent on another machine: replies go through af-network send (with a
     // receipt), the timeline is af-network read polled every 20 s, and it cannot be stopped.
     const remoteHost = watcher.remoteHostOf(agentId);
+    const remoteNative = remoteHost ? await remote?.nativeSession(remoteHost).catch(() => null) : null;
     const binding=watcher.boundRef(agentId);
-    const capabilities=agentCapabilities(remoteHost,watcher.isBoundAgent(agentId),{paseoServerId:watcher.remoteHostOf(agentId)?remote?.paseoServerIds[watcher.remoteHostOf(agentId)!]:paseoServerId(),linked:binding?host.peek(binding.boardId)?.get(binding.frameId)?.meta?.paseo?.linked===true:false,remoteStop:!!remoteHost&&!!remote?.canCancel(remoteHost)});
+    const capabilities=agentCapabilities(remoteHost,watcher.isBoundAgent(agentId),{paseoServerId:watcher.remoteHostOf(agentId)?remote?.paseoServerIds[watcher.remoteHostOf(agentId)!]:paseoServerId(),linked:binding?host.peek(binding.boardId)?.get(binding.frameId)?.meta?.paseo?.linked===true:false,remoteNative:!!remoteNative,remoteStop:!!remoteHost&&!!remote?.canCancel(remoteHost)});
     if(m[2]==="/capabilities"){if(req.method!=="GET")send(res,405,{error:"GET required"});else send(res,200,{agentId,capabilities});return true;}
-    if (remoteHost) {
+    if (remoteHost && (!remoteNative || m[2] === "/prompt" || m[2] === "/cancel")) {
       if (m[2] === "/files" || m[2] === "/controls" || setter) return send(res, 501, { error: `agent ${agentId} runs on ${remoteHost}; its controls and files are only available in Paseo on that machine` }), true;
       // Stop over the host's paired Paseo connection when there is one; otherwise say why not.
       if (m[2] === "/cancel") {
@@ -993,10 +1035,10 @@ export function startHttp(opts: {
         if(m[2]!=="/timeline"||url.searchParams.has("before"))return send(res,501,{error:"Remote source has no exact row or older cursor capability",capabilities:{older:false,exact:false}}),true;
         return send(res,200,{agentId,rows:snap?.rows??[],remote:remoteHost,polledAt:snap?.remote?.polledAt??null,...remoteState,nextCursor:null,hasOlder:false,capabilities:{older:false,exact:false}}),true;
       }
-      if (!m[2]) return send(res, 200, { id: agentId, title: snap?.title ?? null, status: snap?.status ?? "idle", remote: remoteHost, polledAt: snap?.remote?.polledAt ?? null, error: snap?.error ?? null, ...remoteState, capabilities, paseoUrl: null }), true;
+      if (!m[2]) return send(res, 200, { id: agentId, title: snap?.title ?? null, status: snap?.status ?? "idle", remote: remoteHost, polledAt: snap?.remote?.polledAt ?? null, error: snap?.error ?? null, ...remoteState, capabilities, paseoUrl: null, lastUserMessage: summaryOf(lastHumanMessage(snap?.rows ?? [])) }), true;
       return false;
     }
-    const ref = api.agents.ref(agentId);
+    const ref = (remoteNative?.api ?? api).agents.ref(agentId);
     if (!m[2]) {
       const snap = await ref.refresh().catch(() => null);
       if (!snap) {
@@ -1004,7 +1046,8 @@ export function startHttp(opts: {
         return true;
       }
       const a = snap.agent;
-      send(res, 200, { id: a.id, title: a.title, status: statusOf(a), provider: a.provider, model: a.model, modeId: a.currentModeId, workspaceId: a.workspaceId, labels: a.labels, pendingPermissions: a.pendingPermissions?.length ?? 0, lastError: a.lastError, capabilities, paseoUrl: paseoUrl(a.id) });
+      const lastUserMessage = await lastUserMessageOf(agentId, (a as { lastUserMessageAt?: string | null }).lastUserMessageAt ?? null, ref.timeline).catch(() => null);
+      send(res, 200, { id: a.id, title: a.title, status: statusOf(a), provider: a.provider, model: a.model, modeId: a.currentModeId, workspaceId: a.workspaceId, labels: a.labels, pendingPermissions: a.pendingPermissions?.length ?? 0, lastError: a.lastError, capabilities, paseoUrl: paseoUrl(a.id), lastUserMessage });
       return true;
     }
     if(m[2]?.startsWith("/timeline")) {
@@ -1023,7 +1066,7 @@ export function startHttp(opts: {
       send(res, 200, { ok: true });
       return true;
     }
-    if (m[2] === "/files" || m[2] === "/controls" || setter) return handleControls(req, res, url, ref, agentId, m[2]);
+    if (m[2] === "/files" || m[2] === "/controls" || setter) return handleControls(req, res, url, ref, agentId, m[2], remoteNative?.daemon ?? bridge.aux);
     if (m[2] === "/cancel" && req.method === "POST") {
       await bridge.cancelAgent(agentId);
       log(`cancel ${agentId} from the board UI`);
@@ -1032,6 +1075,23 @@ export function startHttp(opts: {
       return true;
     }
     return false;
+  }
+
+  // The last message the person sent an agent, for "You: …" on tiles and cards (the
+  // agent summary above): from the rows the transcript hub already holds when they have
+  // it, else from one tail page of the timeline (150 rows), kept until Paseo's
+  // lastUserMessageAt changes. Never the whole timeline (shared/last-message.ts).
+  const lastUserCache = new Map<string, { key: string | null; value: ReturnType<typeof summaryOf> }>();
+  async function lastUserMessageOf(agentId: string, lastUserMessageAt: string | null, timeline: Parameters<typeof timelinePage>[0]) {
+    const held = lastHumanMessage(transcripts.summary(agentId)?.rows ?? []);
+    if (held) return summaryOf(held);
+    const cached = lastUserCache.get(agentId);
+    if (cached && cached.key === lastUserMessageAt) return cached.value;
+    if (!lastUserMessageAt) return null;
+    const value = summaryOf(lastHumanMessage((await timelinePage(timeline, agentId, "150", null)).rows));
+    lastUserCache.set(agentId, { key: lastUserMessageAt, value });
+    if (lastUserCache.size > 500) lastUserCache.delete(lastUserCache.keys().next().value!);
+    return value;
   }
 
   // A file from board_add_artifact({kind:'file'}): streamed, with byte ranges (iOS needs
@@ -1095,12 +1155,23 @@ export function startHttp(opts: {
     stream.pipe(res);
   }
 
-  function serveStatic(res: ServerResponse, pathname: string, range?: string): void {
+  // Gzipped copies of canvas text files, per file and mtime: the 2.7 MB bundle is ~0.8 MB
+  // gzipped, and slow links waited 30+ s for the raw bytes.
+  // ponytail: compressed on the first request per file per deploy (~0.1 s for the bundle); precompress at build if that shows up.
+  const gzipped = new Map<string, { mtimeMs: number; body: Buffer }>();
+
+  // canvas/dist/assets/* names carry a content hash (Vite), so browsers keep them for good;
+  // index.html is no-cache and names the current ones.
+  function serveStatic(res: ServerResponse, pathname: string, range?: string, acceptEncoding?: string): void {
     const root = path.resolve(cfg.canvasDir);
     let file = path.normalize(path.join(root, decodeURIComponent(pathname)));
     const relative = path.relative(root, file);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return send(res, 403, "forbidden");
-    if (!existsSync(file) || statSync(file).isDirectory()) file = path.join(root, "index.html");
+    if (!existsSync(file) || statSync(file).isDirectory()) {
+      // A tab from an older deploy asking for a build file this deploy no longer has.
+      if (pathname.startsWith("/assets/")) log(`static: ${pathname} is not in this build; served index.html`);
+      file = path.join(root, "index.html");
+    }
     if (!existsSync(file)) return send(res, 503, `canvas not built: ${root} (run npm run build:canvas)`);
     const type = MIME[path.extname(file)] ?? "application/octet-stream";
     // Plugin page clips (/plugin-media/*.webm): byte ranges, so players can seek (Safari needs them).
@@ -1123,8 +1194,17 @@ export function startHttp(opts: {
       createReadStream(file).pipe(res);
       return;
     }
-    res.writeHead(200, { "content-type": type, "cache-control": file.endsWith("index.html") ? "no-cache" : "max-age=3600" });
-    res.end(readFileSync(file));
+    const text = /^(text\/|application\/json|image\/svg)/.test(type);
+    const gzip = text && /\bgzip\b/.test(acceptEncoding ?? "");
+    let body: Buffer;
+    if (gzip) {
+      const { mtimeMs } = statSync(file);
+      let hit = gzipped.get(file);
+      if (hit?.mtimeMs !== mtimeMs) gzipped.set(file, (hit = { mtimeMs, body: gzipSync(readFileSync(file)) }));
+      body = hit.body;
+    } else body = readFileSync(file);
+    res.writeHead(200, { "content-type": type, "cache-control": file.endsWith("index.html") ? "no-cache" : path.dirname(file) === path.join(root, "assets") || /^\d+\.\d+\.\d+$/.test(relative.split(path.sep)[0]) ? "private, max-age=31536000, immutable" : "max-age=3600", ...(text ? { vary: "accept-encoding" } : {}), ...(gzip ? { "content-encoding": "gzip" } : {}) });
+    res.end(body);
   }
 
   const server = createServer((req, res) => {
@@ -1193,7 +1273,7 @@ export function startHttp(opts: {
         }
         if (url.pathname === "/api/health") return send(res, 200, { ok: true, boards: host.all().map((r) => r.id), paseo: !!bridge.api });
         if (url.pathname.startsWith("/api/")) return send(res, 404, { error: "not found" });
-        serveStatic(res, url.pathname, req.headers.range);
+        serveStatic(res, url.pathname, req.headers.range, req.headers["accept-encoding"]);
       } catch (e) {
         const err = e as Error & { status?: number };
         const status = e instanceof ScopeError || e instanceof InputError || err.status ? err.status! : 500;

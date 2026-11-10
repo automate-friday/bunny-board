@@ -9,6 +9,7 @@
 // do nothing. Pure parts are unit-tested (test/mobile-shell.test.ts).
 
 import { useRef } from "react";
+import { multiTouch } from "./boardGestures";
 
 export type Snap = { kind: "stop"; height: number; index: number } | { kind: "close" };
 
@@ -57,6 +58,12 @@ export function useVerticalDrag(move: (up: number) => void, end: (up: number, ve
     onPointerMove: (e) => {
       const s = state.current;
       if (!s || s.id !== e.pointerId) return;
+      // A second finger came down: a pinch, not this drag (it springs back, never commits).
+      if (multiTouch()) {
+        state.current = null;
+        if (s.dragging) cbs.current.move(0);
+        return;
+      }
       if (!s.dragging) {
         if (Math.abs(e.clientY - s.y) < 4) return;
         s.dragging = true;

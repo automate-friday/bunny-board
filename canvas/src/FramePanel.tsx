@@ -1,11 +1,12 @@
+import { startPending } from "../../shared/start-pending";
 import { remoteStatusLabel } from "../../shared/remote-status";
 import {startHostsMemo,watchStartHosts} from "./startHosts";
-import { initialRunsOn, runsOnRequest, fleetHostsForRuntime } from "../../shared/conversation-links";
+import { upstashDefault, executionLabel, initialRunsOn, runsOnRequest, fleetHostsForRuntime, machineLabel, runsOnSummary } from "../../shared/conversation-links";
 import { StartingState } from "./StartingState";
 import { useAgentCapabilities } from "./agentCapabilities";
 import { RelinkFrame } from "./RelinkFrame";
-import { useContext, useEffect, useRef, useState } from "react";
-import { type TLFrameShape, useEditor, useValue } from "tldraw";
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type Editor, type TLFrameShape, useEditor, useValue } from "tldraw";
 import { api } from "./api";
 import { HostConnectionBadge } from "./HostConnectionBadge";
 import { displayStatus, subagentCount, useAgentView, statusLabel } from "./agents";
@@ -18,7 +19,7 @@ import { ArchiveCtx } from "./FrameArchive";
 import { Emoji } from "./Emoji";
 import { BunnyMark } from "./BunnyMark";
 import { ModelPicker } from "./ModelPicker";
-import { addPin, removePin, usePanelDock, usePinJump, usePins } from "./framePanelDock";
+import { addPin, clearOfHeading, removePin, type ScreenRect, usePanelDock, usePinJump, usePins } from "./framePanelDock";
 import { Dot } from "./Dot";
 import { B, BUNNY_CONTROLS_CSS, DOT, chip, fieldLabel, iconBtn, menuItem, primaryBtn, softBtn, surface } from "./bunnyTheme";
 import { FALLBACK_PROVIDERS, fallbackCatalogue, initialChoice, type StartCatalogue } from "../../shared/start-catalogue";
@@ -26,6 +27,8 @@ import { CLOUD_PROVIDERS, CLOUD_PROVIDER_LABEL, frameCloudProvider, type CloudPr
 import { infoNow } from "./info";
 import { MobileCtx } from "./mobile/mobileMode";
 import { askStartSheet } from "./mobile/StartSheet";
+import { QuickStarts } from "./QuickStarts";
+import { recordOpeningPrompt, takePendingPrompt } from "./quickStartPrompts";
 
 const panelBase: React.CSSProperties = {
   ...surface,
@@ -38,7 +41,10 @@ const panelBase: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   gap: 8,
-  maxWidth: "min(560px, 94vw)",
+  // Sized to the canvas area (the panel's containing layer), not the window: side panels narrow the
+  // canvas, and a window-based cap let the panel run under them.
+  maxWidth: "min(560px, calc(100% - 24px))",
+  boxSizing: "border-box",
   zIndex: 300,
 };
 
@@ -59,8 +65,9 @@ const pillStyle: React.CSSProperties = {
 
 // Docked and expanded: the full panel in the same corner, anchored at the bottom so it
 // grows upward; its menus open upward too.
-const dockedPanel: React.CSSProperties = { ...panelBase, position: "relative", top: "auto", left: "auto", transform: "none", zIndex: 1, maxWidth: "min(560px, calc(100vw - 110px))" };
-const dockedPanelNarrow: React.CSSProperties = { ...dockedPanel, maxWidth: "calc(100vw - 32px)" };
+// Docked panels stay inside the dock row (which already clears the launcher and the canvas edges).
+const dockedPanel: React.CSSProperties = { ...panelBase, position: "relative", top: "auto", left: "auto", transform: "none", zIndex: 1, maxWidth: "min(560px, 100%)", minWidth: 0 };
+const dockedPanelNarrow: React.CSSProperties = { ...dockedPanel, maxWidth: "100%" };
 
 const menuBase: React.CSSProperties = { ...surface, position: "absolute", top: "calc(100% + 6px)", right: 0, width: 300, padding: 6, display: "flex", flexDirection: "column", gap: 2, zIndex: 10, maxHeight: "calc(100vh - 140px)", overflowY: "auto" };
 const menuUp: React.CSSProperties = { ...menuBase, top: "auto", bottom: "calc(100% + 6px)" };
@@ -94,6 +101,19 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
   const panel: React.CSSProperties = docked ? (narrow ? dockedPanelNarrow : dockedPanel) : narrow ? { ...panelBase, left: 8, right: 8, top: 58, transform: "none", maxWidth: "none", maxHeight:"calc(100dvh - 74px)", overflowY:"auto" } : panelBase;
   const [menuOpen, setMenuOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  // Floating: never on top of the frame's own title, which is double-clicked to rename it.
+  const headingKey = useValue("frame-panel-heading", () => (docked ? "" : headingScreenKey(editor, frame.id)), [editor, frame.id, docked]);
+  const [shift, setShift] = useState(0);
+  useLayoutEffect(() => {
+    const el = root.current;
+    const heading = parseRectKey(headingKey);
+    if (!el || !heading) {
+      setShift(0);
+      return;
+    }
+    const r = el.getBoundingClientRect();
+    setShift((cur) => clearOfHeading({ left: r.left, right: r.right, top: r.top - cur, bottom: r.bottom - cur }, heading));
+  }, [headingKey]);
   // A pin pill clicked by keyboard or mouse unmounts as this panel replaces it; keep focus in
   // the dock (here) instead of losing it to the page. A canvas selection keeps canvas focus.
   useEffect(() => {
@@ -118,6 +138,11 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
   });
   // A frame the phone shell's Start agent just drew opens straight on the start form.
   const [mode, setMode] = useState<"idle" | "start" | "restart" | "unbind">(() => (startRequested.delete(frame.id) ? "start" : "idle"));
+  // The panel stays mounted when the selection moves to another frame (a conversation's + New
+  // agent selects the frame it drew): pick up its request then too.
+  useEffect(() => {
+    if (startRequested.delete(frame.id)) setMode("start");
+  }, [frame.id]);
   // On a phone the start form is the shell's own sheet; this panel's inline form (narrow at
   // the top of the canvas, under the frame spotlight) is never shown there.
   useEffect(() => {
@@ -133,6 +158,15 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
   const [catalogue, setCatalogue] = useState<StartCatalogue | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
   const [line, setLine] = useState("");
+  // A starter chosen on the empty-board hint opens this frame's start form with it filled.
+  // (The phone's start sheet takes the starter itself.)
+  useEffect(() => {
+    if (mobile) return;
+    const p = takePendingPrompt(frame.id);
+    if (p === undefined) return;
+    setLine(p);
+    setMode("start");
+  }, [frame.id, mobile]);
   // Cloud path (skills/cloud-dev): a cloud builder (Claude by default, or Codex) codes; this
   // Mac previews and deploys. The Model picker above is the conductor conversation's own.
   const [cloud, setCloudState] = useState(() => {
@@ -143,7 +177,11 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
     setCloudState(value);
     try { localStorage.setItem("bunny:runs-on", value ? "worker" : "runtime"); } catch { /* Storage can be disabled. */ }
   };
-  const [startHost, setStartHost] = useState(() => {try{const saved=localStorage.getItem("bunny:runs-on");return saved?.startsWith("host:")?saved.slice(5):"";}catch{return "";}});
+  const ephemeral = upstashDefault(infoNow());
+  const [startHost, setStartHost] = useState(() => {if(upstashDefault(infoNow()))return "";try{const saved=localStorage.getItem("bunny:runs-on");return saved?.startsWith("host:")?saved.slice(5):"";}catch{return "";}});
+  // The machine local (and cloud-conducted) agents really run on: what the board's Paseo
+  // daemon reports, else the configured runtime host.
+  const runtimeMachine = infoNow()?.agentMachine || infoNow()?.runtimeHostname || "";
   const [startHosts, setStartHosts] = useState<Array<{host:string;state:string;enabled:boolean;reason?:string}>>(() => startHostsMemo().hosts);
   const [hostsNote, setHostsNote] = useState<string | null>(null);
   const [hostsLoading, setHostsLoading] = useState(false);
@@ -235,10 +273,10 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
 
   const bound = !!paseo.agentId;
   // Same status the sidebar shows: the live agent view, falling back to the frame's record.
-  const liveStatus = bound ? displayStatus(hostView, paseo.boundAt, paseo.status, paseo.subagents, paseo.cloudSessions, paseo.host) : "";
+  const liveStatus = bound ? displayStatus(hostView, paseo.boundAt, paseo.status, paseo.subagents, paseo.cloudSessions, paseo.host, startPending(paseo)) : "";
   const statusKey = bound ? (paused ? "paused" : liveStatus) : paseo.status === "error" ? "error" : paseo.request ? "requested" : "unbound";
   const statusText = bound
-    ? `${remoteStatusLabel(hostView?.remote ?? (paseo.host ? {host:paseo.host,polledAt:null} : undefined),statusLabel(liveStatus, subagentCount(hostView, paseo.subagents)))}${paused ? ` · paused${paseo.pendingDeltas ? `, ${paseo.pendingDeltas} queued` : ""}` : ""}`
+    ? `${remoteStatusLabel(hostView?.remote ?? (paseo.host ? {host:paseo.host,polledAt:null} : undefined),statusLabel(liveStatus, subagentCount(hostView, paseo.subagents)), Date.now(), liveStatus === "starting")}${paused ? ` · paused${paseo.pendingDeltas ? `, ${paseo.pendingDeltas} queued` : ""}` : ""}`
     : paseo.status === "error"
       ? "start failed"
       : paseo.request
@@ -270,7 +308,9 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
   const header = (primary: React.ReactNode) => (
     <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
       <Dot status={statusKey} text={statusText} testId={bound ? "frame-status" : "frame-dot"} />
-      <b title={name} style={{ font: "600 14px Inter, system-ui, sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: "1 1 auto", maxWidth: narrow ? "none" : 240 }}>{name}</b>
+      <b title={name} style={{ font: "600 14px Inter, system-ui, sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: "0 1 auto", maxWidth: narrow ? "none" : 240 }}>{name}</b>
+      {/* Pushes the actions to the right edge when the panel is wider than the header (start form open). */}
+      <span aria-hidden style={{ flex: "1 1 0", minWidth: 0 }} />
       {primary}
       <button
         type="button"
@@ -279,10 +319,10 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
         aria-pressed={pinned}
         title={pinned ? "Unpin this frame" : "Pin this frame for quick switching"}
         aria-label={pinned ? `Unpin ${name}` : `Pin ${name}`}
-        style={{ ...iconBtn, fontSize: 14, background: pinned ? B.lavenderSoft : "transparent", filter: pinned ? "none" : "grayscale(1) opacity(.55)" }}
+        style={{ ...iconBtn, background: pinned ? B.lavenderSoft : "transparent", color: pinned ? B.violetDeep : B.muted }}
         onClick={() => setPins(pinned ? removePin(pins, live.id) : addPin(pins, live.id))}
       >
-        📌
+        <PinIcon filled={pinned} />
       </button>
       <button
         type="button"
@@ -310,8 +350,8 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
 
   const chips = (
     <div className="bfp-chips" style={{ display: "flex", flexWrap: "wrap", gap: 4, padding: "4px 6px 6px" }}>
-      {bound ? <span style={{ ...chip, background: "#fff", border: `1px solid ${B.line}` }}><HostConnectionBadge view={hostView} /></span> : null}
-      {bound && paused ? <span data-testid="frame-paused" title="Board agents are paused; frame changes wait until they resume" style={{ ...chip, background: "#FFF0CC", color: B.espresso }}>⏸ paused{paseo.pendingDeltas ? ` · ${paseo.pendingDeltas} queued` : ""}</span> : null}
+      {bound ? <span style={{ ...chip, background: "light-dark(#fff, var(--bunny-surface))", border: `1px solid ${B.line}` }}><HostConnectionBadge view={hostView} /></span> : null}
+      {bound && paused ? <span data-testid="frame-paused" title="Board agents are paused; frame changes wait until they resume" style={{ ...chip, background: "light-dark(#FFF0CC, hsl(42 45% 21%))", color: B.espresso }}>⏸ paused{paseo.pendingDeltas ? ` · ${paseo.pendingDeltas} queued` : ""}</span> : null}
       {paseo.host ? <span title="Runs on another Mac, reached through af-network" style={{ ...chip, background: B.lavenderSoft }}>on {paseo.host}</span> : null}
       {paseo.cloud ? <CloudChip provider={frameCloudProvider(paseo)} /> : null}
       {paseo.linked ? <span title="Imported conversations cannot get the board tools mid-session (Paseo limit). They get your changes as messages and answer in the sidebar." style={{ ...chip, background: B.peachSoft }}>imported</span> : null}
@@ -348,7 +388,7 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
     <div
       ref={root}
       className="bunny-fp"
-      style={inPin ? { ...panel, maxWidth: "100%", border: `1px solid ${B.violet}`, outline: "none" } : panel}
+      style={inPin ? { ...panel, maxWidth: "100%", border: `1px solid ${B.violet}`, outline: "none" } : shift ? { ...panel, top: `calc(${typeof panel.top === "number" ? `${panel.top}px` : panel.top} + ${shift}px)` } : panel}
       data-testid="frame-panel"
       data-dock={inPin ? "pin" : dock}
       data-frame-id={live.id}
@@ -442,7 +482,7 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
                 </button>
                 <button
                   type="button"
-                  style={{ ...primaryBtn, background: B.danger, borderColor: B.danger }}
+                  style={{ ...primaryBtn, background: "#C2410C", borderColor: "light-dark(#C2410C, hsl(17 35% 39%))" }}
                   data-testid="unbind-go"
                   disabled={unbinding}
                   onClick={() => {
@@ -505,9 +545,9 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
       {paseo.relink?.requiresConfirmation === true && typeof paseo.relink.agentId === "string" ? <RelinkFrame key={`${boardId}:${live.id}:${paseo.relink.agentId}:${paseo.relink.host ?? "local"}`} editor={editor} frame={live} boardId={boardId} hint={paseo.relink} onOpen={onOpen} /> : null}
       {paseo.error ? <div role="alert" style={{ color: B.danger, fontSize: 12, paddingRight: 6 }}>Last attempt failed: {paseo.error}</div> : null}
       {mode === "start" && !mobile ? (
-        <div data-testid="start-form" style={{ display: "flex", flexDirection: "column", gap: 10, padding: "10px 6px 2px 0", borderTop: `1px solid ${B.line}`, width: narrow ? "auto" : 440, maxWidth: "100%", boxSizing: "border-box" }}>
+        <div data-testid="start-form" style={{ display: "flex", flexDirection: "column", gap: 12, padding: "12px 6px 2px 0", borderTop: `1px solid ${B.line}`, width: narrow ? "auto" : 440, maxWidth: "100%", boxSizing: "border-box" }}>
           <div data-testid="start-model-row" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0 }}>
-            <span style={{ ...fieldLabel, minWidth: 48 }}>Model</span>
+            <span style={{ ...fieldLabel, width: 84, flex: "none" }}>Model</span>
             <ModelPicker catalogue={catalogue} value={provider} onChange={setProvider} up={docked} />
           </div>
           <textarea
@@ -520,41 +560,54 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
             onChange={(e) => setLine(e.target.value)}
             onKeyDown={(e) => e.stopPropagation()}
           />
-          <div data-testid="start-options-row" style={{ display: "flex", alignItems: "center", columnGap: 14, rowGap: 8, flexWrap: "wrap", minWidth: 0 }}>
-            <div role="group" aria-label="Runs on" data-testid="start-runs-on" style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 4, flexBasis: "100%", minWidth: 0 }}>
-              <span data-testid="start-host-label" style={{display:"inline-flex",alignItems:"center",gap:4,whiteSpace:"nowrap",flexShrink:0}}><span style={fieldLabel}>Runs on</span><button type="button" style={{...iconBtn,width:28,height:28}} onClick={()=>setHostsRefresh(n=>n+1)} aria-label="Refresh hosts">↻</button></span>
-              <button type="button" data-testid="start-host-scope" aria-pressed={!startHost && !cloud} onClick={() => {setStartHost("");setCloud(false);}} style={{ ...softBtn, background: !startHost && !cloud ? B.lavenderSoft : "#fff" }} title="Start on the configured Paseo runtime">{infoNow()?.runtimeHostname || "this Mac"}</button>
-              {startHosts.map(h => <button key={h.host} type="button" data-testid={`start-host-${h.host}`} aria-pressed={startHost===h.host} disabled={!h.enabled} title={h.reason || `Start on ${h.host}`} onClick={() => {setStartHost(h.host);setCloudState(false);try{localStorage.setItem("bunny:runs-on",`host:${h.host}`);}catch{}}} style={{...softBtn,background:startHost===h.host?B.lavenderSoft:"#fff"}}>{h.host}</button>)}
-              <button type="button" data-testid="start-cloud" aria-pressed={!startHost && cloud} onClick={() => {setStartHost("");setCloud(true);}} style={{ ...softBtn, background: !startHost && cloud ? B.lavenderSoft : "#fff" }}>Ephemeral worker</button>
+          {line.trim() ? null : <QuickStarts onPick={(s) => setLine(s.prompt)} />}
+          <div data-testid="start-options-row" style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+            {/* One machine at a time, so a segmented choice (as in Paseo's new-agent form), not checkboxes. */}
+            <div data-testid="start-runs-on-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, minWidth: 0 }}>
+              <span data-testid="start-host-label" style={{display:"inline-flex",alignItems:"center",gap:2,whiteSpace:"nowrap",flexShrink:0,width:84}}><span style={fieldLabel} id={`runs-on-${live.id}`}>Runs on</span><button type="button" className="bfp-icon" style={{...iconBtn,width:24,height:24,fontSize:13,color:B.muted}} onClick={()=>setHostsRefresh(n=>n+1)} aria-label="Refresh machines" title="Refresh machines">↻</button></span>
+              <div role="radiogroup" aria-labelledby={`runs-on-${live.id}`} aria-describedby={`start-identity-${live.id}`} data-testid="start-runs-on" className="bfp-seg" style={{ minWidth: 0 }}>
+                <button type="button" role="radio" aria-checked={!startHost} data-testid="start-host-scope" title={`The board's Paseo runtime on ${runtimeMachine || "the board's Mac"}`} onClick={() => {setStartHost("");setCloud(cloud);}}>
+                  {ephemeral ? "Upstash · ephemeral worker" : machineLabel(runtimeMachine, infoNow()?.boardHostname)}
+                </button>
+                {startHosts.map(h => <button key={h.host} type="button" role="radio" aria-checked={startHost===h.host} data-testid={`start-host-${h.host}`} disabled={!h.enabled} title={h.reason || `Run the agent on ${h.host}`} onClick={() => {setStartHost(h.host);setCloudState(false);try{localStorage.setItem("bunny:runs-on",`host:${h.host}`);}catch{}}}>{executionLabel(h.host)}</button>)}
+              </div>
             </div>
-            {!startHost && cloud ? (
-              <div role="radiogroup" aria-label="Cloud builder: who writes the code (not the Model above)" aria-describedby={cloudProvider === "codex" && codexReadiness?.ready === false ? `codex-hint-${live.id}` : undefined} data-testid="start-cloud-provider" style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap", flexBasis: "100%" }}>
-                <span style={fieldLabel} title="The cloud service that writes the code. The Model above is this frame's conversation, which conducts it.">Cloud builder</span>
-                {CLOUD_PROVIDERS.map((p) => (
-                  <label key={p} style={{ display: "inline-flex", gap: 5, alignItems: "center", cursor: "pointer", whiteSpace: "nowrap" }}>
-                    <input type="radio" name={`cloud-provider-${live.id}`} value={p} data-testid={`start-cloud-provider-${p}`} checked={cloudProvider === p} onChange={() => setCloudProvider(p)} />
-                    {CLOUD_PROVIDER_LABEL[p]}
-                  </label>
-                ))}
+            {!ephemeral && !startHost && cloud ? (
+              <div data-testid="start-cloud-provider-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, minWidth: 0 }}>
+                <span style={{ ...fieldLabel, width: 84, flex: "none" }} title="The cloud service that writes the code. The Model above is this frame's conversation, which conducts it.">Builder</span>
+                <div role="radiogroup" aria-label="Cloud builder: who writes the code (not the Model above)" aria-describedby={cloudProvider === "codex" && codexReadiness?.ready === false ? `codex-hint-${live.id}` : undefined} data-testid="start-cloud-provider" className="bfp-seg">
+                  {CLOUD_PROVIDERS.map((p) => (
+                    <button key={p} type="button" role="radio" aria-checked={cloudProvider === p} data-testid={`start-cloud-provider-${p}`} onClick={() => setCloudProvider(p)}>
+                      {CLOUD_PROVIDER_LABEL[p]}
+                    </button>
+                  ))}
+                </div>
               </div>
             ) : null}
-            {!startHost && cloud && cloudProvider === "codex" && codexReadiness?.ready === false ? (
+            {!ephemeral && !startHost && cloud && cloudProvider === "codex" && codexReadiness?.ready === false ? (
               <div id={`codex-hint-${live.id}`} data-testid="start-codex-hint" style={{ flexBasis: "100%", fontSize: 11, color: B.espresso, background: B.peachSoft, borderRadius: 8, padding: "4px 8px" }}>
                 {codexReadiness.error || "Codex Cloud is not ready on this Mac. Run cloud-task doctor --provider codex for details."}
               </div>
             ) : null}
-            <div data-testid="start-identity" style={{flexBasis:"100%",fontSize:11,color:B.espresso}}>Board: {infoNow()?.boardHostname || infoNow()?.machine || "unknown"} · Agent runs on: {startHost || (cloud ? "Ephemeral worker" : infoNow()?.runtimeHostname || "this Mac")}</div>
-            {startHosts.filter(h=>!h.enabled).map(h=><div key={h.host} data-testid="start-host-reason" style={{flexBasis:"100%",fontSize:11}}>{h.host}: {h.reason}</div>)}
+            {/* The selected machine already says where it runs; this summary is read out with the choice, not shown. */}
+            <div id={`start-identity-${live.id}`} data-testid="start-identity" className="bfp-sr">{ephemeral ? (startHost ? `The agent runs on ${executionLabel(startHost)}.` : "The agent runs on an ephemeral Upstash worker. Your selected subscription is used.") : runsOnSummary({ machine: startHost || runtimeMachine, boardHost: infoNow()?.boardHostname, cloudProvider: !startHost && cloud ? cloudProvider : null })}</div>
+            {startHosts.filter(h=>!h.enabled).map(h=><div key={h.host} data-testid="start-host-reason" style={{fontSize:11,color:B.muted,paddingLeft:94}}>{h.host}: {h.reason}</div>)}
             {hostsNote ? <div style={{flexBasis:"100%",fontSize:11}}>{hostsNote}</div> : null}
             {hostsLoading ? <div role="status" style={{flexBasis:"100%",fontSize:11}}>Refreshing hosts…</div> : null}
             {hostsError ? <div role="alert" style={{flexBasis:"100%",color:B.danger,fontSize:11}}>{hostsError}</div> : null}
           </div>
-          <div data-testid="start-actions-row" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <div data-testid="start-actions-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, minWidth: 0 }}>
+            {!ephemeral ? (
+              <button type="button" role="switch" aria-checked={!startHost && cloud} data-testid="start-cloud" className="bfp-switch" title={`The agent runs on ${runtimeMachine || "the board's Mac"}; a cloud builder (Claude or Codex) writes the code, and this board only previews and deploys.`} onClick={() => {setStartHost("");setCloud(!(!startHost && cloud));}}>
+                <span aria-hidden className="bfp-switch-track"><span className="bfp-switch-thumb" /></span>
+                Cloud agent
+              </button>
+            ) : null}
             <span style={{ flex: 1 }} />
             <button type="button" style={softBtn} onClick={() => setMode("idle")}>
               Cancel
             </button>
-            <button type="button" className="bfp-primary" style={primaryBtn} data-testid="start-go" disabled={!provider || (!!startHost && (!startHosts.some(h=>h.host===startHost && h.enabled)))} onClick={() => provider && writeRequest({ kind: "create", provider, prompt: line || undefined, ...runsOnRequest(cloud, cloudProvider, startHost) })}>
+            <button type="button" className="bfp-primary" style={primaryBtn} data-testid="start-go" disabled={!provider || (!!startHost && (!startHosts.some(h=>h.host===startHost && h.enabled)))} onClick={() => { if (!provider) return; recordOpeningPrompt(line); writeRequest({ kind: "create", provider, prompt: line || undefined, ...runsOnRequest(ephemeral ? false : cloud, cloudProvider, startHost) }); }}>
               Start
             </button>
           </div>
@@ -562,6 +615,16 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
       ) : null}
       {err ? <span style={{ color: B.danger }}>{err}</span> : null}
     </>,
+  );
+}
+
+// Outline pin when unpinned, filled when pinned; drawn in currentColor so it keeps the theme's contrast.
+function PinIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 4h6l-1 5 3 3v2H7v-2l3-3-1-5z" />
+      <path d="M12 14v6" />
+    </svg>
   );
 }
 
@@ -574,4 +637,23 @@ function CloudChip({ provider }: { provider: CloudProvider | null }) {
       ☁ {name} cloud
     </span>
   );
+}
+
+// The selected frame's title (its heading label) on screen, as a stable string key so the panel
+// re-renders only when it actually moves. "" when the frame has no visible heading.
+function headingScreenKey(editor: Editor, id: TLFrameShape["id"]): string {
+  const shape = editor.getShape(id);
+  if (!shape) return "";
+  const geometry = editor.getShapeGeometry(shape) as { children?: { isLabel?: boolean; bounds: { corners: { x: number; y: number }[] } }[] };
+  const label = geometry.children?.find((c) => c.isLabel);
+  if (!label) return "";
+  const t = editor.getShapePageTransform(shape);
+  const pts = label.bounds.corners.map((p) => editor.pageToScreen(t.applyToPoint(p)));
+  const xs = pts.map((p) => p.x);
+  const ys = pts.map((p) => p.y);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)].map(Math.round).join(",");
+}
+function parseRectKey(key: string): ScreenRect | null {
+  const [left, top, right, bottom] = key ? key.split(",").map(Number) : [];
+  return key ? { left, top, right, bottom } : null;
 }

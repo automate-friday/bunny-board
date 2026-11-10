@@ -22,16 +22,16 @@ export function ConversationOverview({ view, status, boundAt, now, open, onToggl
   const stale = view?.remote ? remoteFreshness(view, now).stale : age === null || age > 60;
   const waiting = (status === "starting" || status === "running" || status === "loading") && !reply;
   const elapsed = boundAt ? Math.max(0, Math.floor((now - boundAt) / 1000)) : null;
-  return <section data-testid="conversation-overview" aria-label="Conversation overview" style={{ padding: "10px 12px", borderBottom: "1px solid #ddd", background: "#fff", overflowWrap: "anywhere" }}>
+  return <section data-testid="conversation-overview" aria-label="Conversation overview" style={{ padding: "10px 12px", borderBottom: "1px solid light-dark(#ddd, var(--bunny-line))", background: "light-dark(#fff, var(--bunny-surface))", overflowWrap: "anywhere" }}>
     <strong>Overview</strong>
-    <div style={{ color: "#666", fontSize: 11 }}>Message excerpts, shortened for overview; expand the log for received detail.</div>
-    {status === "needs-permission" ? <div role="alert" data-testid="permission-alert" style={{ color: "#9c4b00", fontWeight: 600 }}>{view?.remote ? `Last poll reported a permission request.${stale ? " Current status unknown; check the owning host." : " Check the owning host."}` : "Permission needed — answer in Paseo before work can continue."}</div> : null}
-    {status === "error" || view?.error || error ? <div role="alert" style={{ color: "#b00020" }}>{view?.error || (error ? `Recorded error: ${error.text}` : "") || "Agent reported an error. Open the log for details."}</div> : null}
+    <div style={{ color: "light-dark(#666, var(--bunny-muted))", fontSize: 11 }}>Message excerpts, shortened for overview; expand the log for received detail.</div>
+    {status === "needs-permission" ? <div role="alert" data-testid="permission-alert" style={{ color: "light-dark(#9c4b00, hsl(29 88% 74%))", fontWeight: 600 }}>{view?.remote ? `Last poll reported a permission request.${stale ? " Current status unknown; check the owning host." : " Check the owning host."}` : "Permission needed — answer in Paseo before work can continue."}</div> : null}
+    {status === "error" || view?.error || error ? <div role="alert" style={{ color: "light-dark(#b00020, hsl(349 88% 74%))" }}>{view?.error || (error ? `Recorded error: ${error.text}` : "") || "Agent reported an error. Open the log for details."}</div> : null}
     {request ? <p style={{ margin: "6px 0" }}><b>Latest request: </b>{excerpt(request.text || "Board opening prompt")}</p> : null}
     {reply ? <div style={{ margin: "6px 0", maxHeight: mobile ? undefined : 220, overflowY: mobile ? "visible" : "auto" }}><b>Latest reply: </b><MessageBody text={reply.text} /></div> : null}
     {tool ? <p style={{ margin: "6px 0", fontSize: 12 }}><b>Last tool: </b>{excerpt(tool.text, 120)}{tool.status ? ` · ${tool.status}` : ""}</p> : null}
     {waiting ? <div data-testid="first-reply-wait">{view?.remote ? `No reply in cached messages.${stale ? " Current status unknown." : " Waiting for the next poll."}` : <>Waiting for first reply{elapsed !== null ? ` · ${elapsed}s since binding` : ""}. No reply received yet.</>}</div> : null}
-    <div data-testid="timeline-freshness" style={{ marginTop: 6, fontSize: 11, color: stale ? "#9c4b00" : "#666" }}>
+    <div data-testid="timeline-freshness" style={{ marginTop: 6, fontSize: 11, color: stale ? "light-dark(#9c4b00, hsl(29 88% 74%))" : "light-dark(#666, var(--bunny-muted))" }}>
       {view?.remote ? "Remote, message-only coverage; tool detail unavailable. " : "Local timeline. "}
       {age === null ? "First snapshot pending." : `Last snapshot ${age}s ago${stale ? " · stale; current status unknown" : ""}.`}
     </div>

@@ -47,7 +47,7 @@ export interface BoardConfig {
 
 export const DEFAULT_PORT = 8793;
 
-export const DEFAULT_MODE_IDS: Record<string, string> = { claude: "bypassPermissions", codex: "full-access", omp: "full" };
+export const DEFAULT_MODE_IDS: Record<string, string> = { claude: "bypassPermissions", codex: "full-access", "upstash-claude": "bypassPermissions", "upstash-codex": "full-access", omp: "full" };
 
 function readServerId(): string | null {
   const f = path.join(process.env.PASEO_HOME ?? path.join(os.homedir(), ".paseo"), "server-id");

@@ -207,6 +207,7 @@ export function deliveryLabel(sent: Sent, replyAt: string | null, status: string
     if (sent.reason === "waiting-turn") return { text: "queued · waits for the agent's turn to end (it can't take messages mid-turn)", tone: "pending" };
     if (sent.reason === "waiting-host") return { text: "queued · Paseo unreachable; sends when it reconnects", tone: "pending" };
     if (sent.reason === "waiting-status") return { text: `queued · waits until ${sent.host ?? "the other Mac"} reports the agent idle`, tone: "pending" };
+    if (sent.reason === "waiting-start") return { text: "queued · sends once the agent has started", tone: "pending" };
     if (sent.reason === "waiting-earlier") return { text: "queued · goes after your earlier message", tone: "pending" };
     if (sent.detail && !sent.reason) return { text: `queued · ${sent.detail}`, tone: "pending" };
     return { text: `queued · delivering${tries}…`, tone: "pending" };
@@ -222,4 +223,36 @@ export function deliveryLabel(sent: Sent, replyAt: string | null, status: string
   if (replyAt && Date.parse(replyAt) >= sent.at - 1000) return { text: "delivered ✓ · replied", tone: "ok" };
   if (status === "running") return { text: "delivered ✓ · agent working…", tone: "working" };
   return { text: "delivered ✓", tone: "ok" };
+}
+
+// A queued reply the person may still take back (Edit / Remove): filed with the board but
+// never sent. The board server has the last word (it refuses once a send was tried).
+export function canWithdraw(sent: Sent): boolean {
+  return sent.outcome === "queued" && !!sent.messageId && !sent.attempts;
+}
+
+// The board server took a queued reply back. It leaves the box's list; "edit" puts its
+// text at the start of the box (ahead of anything typed since, kept byte-for-byte) so the
+// person can correct it and send it again, "remove" drops it. A newer send, if any, stays
+// the latest.
+export function composerWithdraw(s: ComposerState, messageId: string, mode: "edit" | "remove"): ComposerState {
+  const all = composerSends(s);
+  const gone = all.find((x) => x.messageId === messageId);
+  if (!gone) return s;
+  const rest = all.filter((x) => x !== gone);
+  const latestGone = s.sent === gone;
+  const earlier = latestGone ? rest.slice(0, -1) : rest.filter((x) => x !== s.sent);
+  const sent = latestGone ? rest.at(-1) ?? null : s.sent;
+  // The restored block belonged to the send that put it there; editing the box's start
+  // here would shift it, so ownership ends (a Send again then keeps the whole box).
+  const next: ComposerState = { ...s, sent, earlier: earlier.length ? earlier : undefined };
+  if (mode === "remove") return next;
+  return { ...next, text: s.text ? `${gone.text}\n${s.text}` : gone.text, restored: null };
+}
+
+// Settle only a send the box still tracks: a check that was in flight when the person
+// withdrew a message must not bring it (or its text) back.
+export function composerSettleTracked(s: ComposerState, settled: Sent): ComposerState {
+  if (settled.messageId && !composerSends(s).some((x) => x.messageId === settled.messageId)) return s;
+  return composerSettle(s, settled);
 }

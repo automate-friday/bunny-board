@@ -1,4 +1,6 @@
+import {executionProvider,upstashDefault} from '../shared/conversation-links';
 import { bunnyEnv } from "./bunny-env";
+import { startPending } from "../shared/start-pending";
 import { timed } from "./perf";
 import path from "node:path";
 import { compressionOffers } from "./frame-compression";
@@ -519,7 +521,17 @@ export class FrameWatcher {
   }
 
   isVisibleAgent(agentId: string): boolean {
-    return this.byAgent.has(agentId) || this.componentAgents().has(agentId);
+    return this.byAgent.has(agentId) || this.componentAgents().has(agentId) || this.startPendingFor(agentId);
+  }
+
+  // The agent's frame still has its start under way (shared/start-pending.ts): a remote
+  // start the host has not finished, or a bind after a restart that has not settled. The
+  // UI may read it and queue replies for it; they wait for the start (waiting-start).
+  startPendingFor(agentId: string): boolean {
+    const ref = this.boundRef(agentId);
+    if (!ref || !this.host) return false;
+    const p = this.host.peek(ref.boardId)?.get(ref.frameId)?.meta?.paseo;
+    return p?.agentId === agentId && startPending(p);
   }
 
   outlineCtx(): OutlineContext {
@@ -1099,6 +1111,17 @@ export class FrameWatcher {
       const b = this.bindingFor(room.id, after.id);
       if (b) queueMicrotask(() => void this.flush(b, false));
     }
+    // Frame dragged (or reshaped from its top/left edge) by a person: they chose this spot,
+    // so its agent does not move it with board_frame({move}) and neighbours may not push it
+    // (frame-room.ts humanMovedAt).
+    if (before && source.kind === "human" && (before.x !== after.x || before.y !== after.y) && before.parentId === after.parentId) {
+      fixups.push((r) =>
+        r.write({ kind: "server", reason: "human-moved" }, (ops) => {
+          const cur = ops.get(after.id);
+          if (cur) ops.put({ ...cur, meta: { ...cur.meta, layout: { ...cur.meta?.layout, humanMovedAt: Date.now() } } });
+        }),
+      );
+    }
     // Frame resized by a human: adopt sibling shapes now fully enclosed (the user's
     // "expanded the board to include a new idea").
     if (pa.agentId && before && (before.props.w !== after.props.w || before.props.h !== after.props.h || before.x !== after.x || before.y !== after.y)) {
@@ -1669,7 +1692,12 @@ export class FrameWatcher {
   }
 
   remoteHostOf(agentId: string): string | null {
-    return this.byAgent.get(agentId)?.host ?? null;
+    const bound = this.byAgent.get(agentId);
+    if (bound) return bound.host;
+    for (const room of this.host.all()) for (const record of room.records.values()) {
+      if (record.type === "transcript" && record.props?.agentId === agentId && typeof record.meta?.paseo?.host === "string") return record.meta.paseo.host;
+    }
+    return null;
   }
 
   // af-network polls of a remote agent (every 20 s): status, and turn ends.
@@ -1900,7 +1928,7 @@ export class FrameWatcher {
           "- board_write({shapes:[{type:'note'|'text'|'box'|'ellipse'|'arrow'|'frame'|'bookmark'|'link'|'checklist', x, y, w?, h?, text?, color?, from?, to?, url?, board?, frameId?, title?, items?, portal?}]}) — writes shapes, including portal stickies (a note with portal:{id} links another shape or frame). x/y are relative to your frame's top-left. Writes outside your frame, and writes that would overlap another shape, are rejected (the error names the next free slot). type:'link' with board (and frameId) is a card that opens another board or frame. A note may carry portal:{id} (any shape on the board, other frames too) or a page-space area portal:{x,y,w,h}: a sticky that links to related content elsewhere, which the person can jump to and back or expand in place.",
           "- board_update({id, patch:{text?, color?, x?, y?, w?, h?, portal?}}) — changes a shape; patch.portal:{id:'shape:…'} turns a sticky into a portal (portal:null removes it), board_delete({ids}) — only shapes inside your frame; deleting a human's shape needs force:true.",
           `- board_layout({strategy:'grid'|'columns', ids?, gap?}) — re-flow your shapes so nothing overlaps (${this.cfg.humanName}'s shapes and cards stay put); grows your frame if needed.`,
-          "- board_frame({resize?:{w,h}, name?}) — grow your frame or rename it.",
+          "- board_frame({resize?:{w,h,anchor?}, move?:'auto', name?}) — grow your frame (anchor 'top-right' grows left, 'bottom-left' grows up), move it to the nearest free spot that fits, or rename it. A blocked resize lists what is in the way and your options.",
           "- board_add_artifact({path|url, title}) — drop a PNG/JPG screenshot or a link card into your frame; board_add_artifact({kind:'file', path}) copies any other file (HTML report, transcript, PDF) into the board and links it.",
           "- board_widget({action:'list'|'add'|'configure'|'read', widgetId?, config?, id?, x?, y?}) — live plugin widgets (e.g. a Slack channel or thread) with a status dot; add one to your frame for the person, configure it, or read its status.",
           `- board_stamp({action:'list'|'ack'|'resolve'|'add', id?, target?, stamp?, note?}) — stamps ${this.cfg.humanName} attaches to shapes in your frame. Each arrives at once as a message starting "Stamp <kind> on …" with a JSON event, even while you work. Fixed meanings: ${stampMeanings()}. ack one when you start on it and resolve it when handled (${this.cfg.humanName} sees sent → seen → acting → done on the stamp); add puts your own stamp on a shape in your frame.`,
@@ -1981,7 +2009,7 @@ export class FrameWatcher {
       if(this.stopped||room.closed)return;
       if(this.bridge.health&&this.bridge.health().state!=='connected')throw new Error('Paseo host disconnected; binding stays queued');
       if (req.kind === "link") await this.fulfilLink(api, room, frameId, req.agentId);
-      else await this.fulfilCreate(api, room, frameId, req.provider, req.prompt, req.workspaceId, req.context, cloudProvider);
+      else await this.fulfilCreate(api, room, frameId, req.provider, req.prompt, req.workspaceId, req.context, cloudProvider, req.cwd);
       if(this.stopped||room.closed)return;
       const timer=this.bindRetries.get(key(room.id,frameId));if(timer)clearTimeout(timer);this.bindRetries.delete(key(room.id,frameId));
       room.write({kind:'server',reason:'bind-recovered'},ops=>{const cur=ops.get(frameId);if(cur)ops.put({...cur,meta:{...cur.meta,paseo:{...cur.meta?.paseo,bindRetry:undefined}}});});room.save();
@@ -2045,7 +2073,7 @@ export class FrameWatcher {
     };
     persist(intent);
     const title=cleanName(frame.props.name)||nameFromRequest(req.prompt)||`Board ${room.id} frame`;
-    const chosen=resolveStartProvider(req.provider||this.cfg.defaultProvider,this.cfg.defaultProvider);
+    const chosen=executionProvider(resolveStartProvider(req.provider||this.cfg.defaultProvider,this.cfg.defaultProvider),this.cfg.defaultProvider,req.host);
     // HTTP tools use the environment's reachable address; no local paths or MCP
     // executables are sent to another Mac.
     const prompt=this.openingPrompt(room,frameId,req.prompt,intent.agentId).replaceAll(`http://127.0.0.1:${this.cfg.port}`,this.cfg.publicBase);
@@ -2152,13 +2180,15 @@ export class FrameWatcher {
     workspaceId: string | undefined,
     context?: "board" | "repo",
     cloud: CloudProvider | null = null,
+    cwd?: string,
   ): Promise<void> {
+    if(upstashDefault(this.cfg))cloud=null;
     // Shapes the frame was drawn around belong to it (tldraw does not always reparent).
     this.adoptEnclosed(room, frameId, null);
     const frame = room.records.get(frameId)!;
     // An untitled frame is named from its request until the agent names it properly.
     const title = cleanName(frame.props.name) || nameFromRequest(line) || nameFromRequest(this.firstNoteText(room, frameId)) || `Board ${room.id} frame`;
-    let startup = agentContext(this.cfg, room.id, frame, context, workspaceId);
+    let startup = cwd ? {context: "repo" as const, cwd, systemPrompt: undefined} : agentContext(this.cfg, room.id, frame, context, workspaceId);
     // Choose the agent id first and write it into the frame before creating the
     // agent: the frame token names the agent, early tool calls resolve, and a
     // restart mid-create replays with the same id instead of making a second agent.
@@ -2183,10 +2213,10 @@ export class FrameWatcher {
     if (existing) {
       this.log(`agent ${agentId} for ${room.id}/${frameId} already exists (replayed request); not creating another`);
     } else {
-      const chosen = resolveStartProvider(provider || this.cfg.defaultProvider, this.cfg.defaultProvider);
+      const chosen = executionProvider(resolveStartProvider(provider || this.cfg.defaultProvider, this.cfg.defaultProvider),this.cfg.defaultProvider);
       const modeId = this.modeFor(chosen);
       let selectedWorkspace: string | undefined;
-      if (startup.context === 'board' || this.cfg.workspacePerBoard !== false || workspaceId) {
+      if (!cwd && (startup.context === 'board' || this.cfg.workspacePerBoard !== false || workspaceId)) {
         const selected = await (this.workspacePolicy ??= new BoardWorkspaces(this.cfg)).select(api, room, startup.context === 'repo', workspaceId, phase => {
           if(this.stopped||room.closed||!this.current(b))return;
           room.write({kind:'server',reason:'workspace-phase'},ops=>{const cur=ops.get(frameId);if(cur)ops.put({...cur,meta:{...cur.meta,paseo:{...cur.meta?.paseo,workspaceSetup:phase}}});});room.save();
@@ -2199,7 +2229,7 @@ export class FrameWatcher {
           if(cur)ops.put({...cur,meta:{...cur.meta,paseo:{...cur.meta?.paseo,workspaceSetup:{phase:'ready',mode:selected.mode,cwd:selected.cwd,workspaceId:selected.id,reason:selected.reason,fallbackFrom:selected.fallbackFrom}}}});
           if(doc && !workspaceId)ops.put({...doc,meta:{...doc.meta,bunnyWorkspaceId:selected.id}});
         });room.save();
-      } else selectedWorkspace = await this.boardWorkspace(api, room, workspaceId);
+      } else if (!cwd) selectedWorkspace = await this.boardWorkspace(api, room, workspaceId);
       const options = {
         agentId,
         config: {

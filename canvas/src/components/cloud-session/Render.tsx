@@ -36,9 +36,9 @@ function useMinute(): number {
 
 const button = (primary: boolean): React.CSSProperties => ({
   pointerEvents: "all",
-  border: `1px solid ${primary ? "#2f80ed" : "#b9c6dd"}`,
-  background: primary ? "#2f80ed" : "#fff",
-  color: primary ? "#fff" : "#223",
+  border: `1px solid ${primary ? "light-dark(#2f80ed, hsl(214 35% 39%))" : "light-dark(#b9c6dd, hsl(218 35% 39%))"}`,
+  background: primary ? "#2f80ed" : "light-dark(#fff, var(--bunny-surface))",
+  color: primary ? "#fff" : "light-dark(#223, var(--bunny-ink))",
   borderRadius: 6,
   padding: "3px 10px",
   textDecoration: "none",
@@ -103,17 +103,17 @@ export function CloudSessionRender({ shape }: { shape: CloudSessionShape }) {
         gap: 4,
         padding: "9px 12px",
         boxSizing: "border-box",
-        background: "#f8f7ff",
+        background: "light-dark(#f8f7ff, var(--bunny-surface))",
         border: `2px solid ${color}`,
         borderRadius: 10,
         boxShadow: "0 2px 10px rgba(0,0,0,0.08)",
         font: "12px system-ui, sans-serif",
-        color: "#223",
+        color: "light-dark(#223, var(--bunny-ink))",
         overflow: "hidden",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 17, color: "#d97757" }}>
+        <span style={{ fontSize: 17, color: "light-dark(#d97757, hsl(15 63% 74%))" }}>
           <Emoji name="cloud" />
         </span>
         <span style={{ fontWeight: 650, fontSize: 13, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{who}</span>
@@ -121,28 +121,28 @@ export function CloudSessionRender({ shape }: { shape: CloudSessionShape }) {
           Open session
         </a>
       </div>
-      <div data-testid="cloud-session-title" style={{ fontSize: 13, color: "#334", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={p.title}>
+      <div data-testid="cloud-session-title" style={{ fontSize: 13, color: "light-dark(#334, var(--bunny-ink))", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={p.title}>
         {p.title || p.session}
       </div>
-      <div data-testid="cloud-session-status" style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, color: "#223", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+      <div data-testid="cloud-session-status" style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, color: "light-dark(#223, var(--bunny-ink))", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         <span className={live ? "cloud-session-pulse" : undefined} style={{ width: 9, height: 9, borderRadius: 5, background: color, flexShrink: 0 }} />
         <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{line}</span>
         {p.prUrl && !pr ? <PrLink url={p.prUrl} n={p.pr} /> : null}
       </div>
       {pr ? (
-        <div data-testid="cloud-session-pr-line" data-pr-state={p.prState} style={{ display: "flex", alignItems: "center", gap: 6, color: "#334", whiteSpace: "nowrap", overflow: "hidden" }}>
-          <span style={{ width: 9, height: 9, borderRadius: 5, background: p.prState === "merged" ? "#8250df" : p.prState === "closed" ? "#9e9e9e" : p.checksFail ? "#eb5757" : "#27ae60", flexShrink: 0 }} />
+        <div data-testid="cloud-session-pr-line" data-pr-state={p.prState} style={{ display: "flex", alignItems: "center", gap: 6, color: "light-dark(#334, var(--bunny-ink))", whiteSpace: "nowrap", overflow: "hidden" }}>
+          <span style={{ width: 9, height: 9, borderRadius: 5, background: p.prState === "merged" ? "light-dark(#8250df, hsl(261 45% 21%))" : p.prState === "closed" ? "light-dark(#9e9e9e, var(--bunny-raised))" : p.checksFail ? "light-dark(#eb5757, hsl(0 45% 21%))" : "#27ae60", flexShrink: 0 }} />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{pr}</span>
           {p.prUrl ? <PrLink url={p.prUrl} n={p.pr} /> : null}
         </div>
       ) : null}
       {p.message ? (
-        <div data-testid="cloud-session-message" style={{ color: "#334", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontStyle: "italic" }} title={p.message}>
-          <span style={{ fontStyle: "normal", fontWeight: 600, color: "#556" }}>{p.messageRole === "user" ? "You: " : "Claude: "}</span>
+        <div data-testid="cloud-session-message" style={{ color: "light-dark(#334, var(--bunny-ink))", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontStyle: "italic" }} title={p.message}>
+          <span style={{ fontStyle: "normal", fontWeight: 600, color: "light-dark(#556, var(--bunny-muted))" }}>{p.messageRole === "user" ? "You: " : "Claude: "}</span>
           {p.message}
         </div>
       ) : null}
-      <div data-testid="cloud-session-activity" style={{ color: "#667", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={detail}>
+      <div data-testid="cloud-session-activity" style={{ color: "light-dark(#667, var(--bunny-muted))", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={detail}>
         {detail && state !== "pr" ? `${detail} · ` : ""}last activity {cloudAgo(p.activityAt, now)}
       </div>
       <style>{"@keyframes cloudSessionPulse{0%,100%{opacity:1}50%{opacity:.35}}.cloud-session-pulse{animation:cloudSessionPulse 1.6s ease-in-out infinite}"}</style>

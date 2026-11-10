@@ -97,7 +97,9 @@ export const PLUGINS: PluginInfo[] = [...widgetPlugins, ...appPlugins];
 // board keep loading.
 // TODO(#27): add the wait clock / timer once "Wait clock card + a Components drawer" lands
 // (it is a board component there, not a widget; list it here when it becomes one).
-export const RELEASED_PLUGINS: readonly string[] = ["claude-activity"];
+// content-calendar: released at the board owner's request so agents can put a Postiz
+// content calendar on a board with board_widget add.
+export const RELEASED_PLUGINS: readonly string[] = ["claude-activity", "content-calendar", "github-pr"];
 
 export const isDevPlugin = (id: string): boolean => !RELEASED_PLUGINS.includes(id);
 
@@ -118,4 +120,53 @@ export const DEFAULT_INSTALLED: string[] = widgetPlugins.map((p) => p.id);
 
 export function pluginPoster(p: PluginInfo): PluginMedia | undefined {
   return p.media.find((m) => m.kind === "image") ?? p.media[0];
+}
+
+// Built-in features that live on the toolbar rather than in the widget tray (like Stamps
+// v2). Listed on /plugins so people find them where the plugins are, with a page each,
+// but never installed or uninstalled: every board has them. Not part of PLUGINS, so My
+// registry, the tray and board_widget list are unchanged.
+export interface BuiltinInfo {
+  id: string;
+  name: string;
+  tagline: string;
+  about: string;
+  whyItMatters: string;
+  howTo: string[];
+  category: string;
+  permissions: PluginPermission[];
+  media: PluginMedia[];
+  version: string;
+  source: { label: string; url: string; license: string };
+}
+
+export const BUILTINS: BuiltinInfo[] = [
+  {
+    id: "portals",
+    name: "Portals",
+    tagline: "Link a sticky to another place on the board, open it in place, or jump there and back.",
+    about:
+      "A sticky can be a portal to a shape (another sticky, a frame, a card, in any frame) or to an area of the board. Its portal button opens a window under the sticky through which the destination is live: you can select, move, type into stickies and add shapes there, and it changes the real content. Jump there moves the board to it; the Back pill returns you to exactly where you were.",
+    whyItMatters:
+      "Boards outgrow their frames. When an agent runs out of room and writes the details somewhere else, or a note depends on research in another frame, a portal keeps the link: you see and edit the other place without losing your spot. Agents make portals too (board_write / board_update with portal), and board_read shows them.",
+    howTo: [
+      "Select a sticky, pick Portal in the bottom toolbar (next to Arrow), then click a shape, or drag a box around an area.",
+      "No sticky selected? Pick Portal and click the sticky first. Esc cancels.",
+      "Or draw an arrow from a sticky to the target and choose Make portal from the right-click menu. Remove portal is there too.",
+      "Click the sticky's portal button to open the portal; Jump there to go; Back to return.",
+    ],
+    category: "Navigation",
+    permissions: [{ kind: "none", text: "Nothing outside the board: a portal is a link stored on the sticky, and the open portal shows this board's own content." }],
+    media: [
+      { kind: "image", src: "/plugin-media/portals/open.png", caption: "An open portal under its sticky: the destination is live and editable." },
+      { kind: "image", src: "/plugin-media/portals/tool.png", caption: "The Portal tool: with a sticky selected, click a shape or drag an area." },
+      { kind: "image", src: "/plugin-media/portals/badges.png", caption: "Portal buttons in each sticky's colour." },
+    ],
+    version: "1.0.0",
+    source: BUNNY_SOURCE,
+  },
+];
+
+export function builtinInfo(id: string): BuiltinInfo | undefined {
+  return BUILTINS.find((b) => b.id === id);
 }

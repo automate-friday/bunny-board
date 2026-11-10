@@ -100,7 +100,12 @@ if (IN_ENV) {
   if (!BOARD_URL) fail(`BOARD_ENV=${label}: set BOARD_URL, or start the environment so ${ENV_STATE}/server.json exists`);
   if (!allowed(BOARD_URL)) fail(`${ENV_STATE}/server.json names ${BOARD_URL}, not one of this environment's origins; refusing`);
 }
-if (!BOARD_URL || !BOARD_TOKEN || !BOARD_ID || !FRAME_ID) fail("BOARD_URL, BOARD_TOKEN, BOARD_ID and FRAME_ID must be set");
+if (!BOARD_URL) fail("BOARD_URL must be set");
+const FRAME_SCOPED = !!(BOARD_TOKEN && BOARD_ID && FRAME_ID);
+if (!FRAME_SCOPED && (BOARD_TOKEN || BOARD_ID || FRAME_ID)) fail("set all BOARD_TOKEN, BOARD_ID and FRAME_ID for frame tools, or omit all three for board_start_frame only");
+const UI_USER = process.env.BUNNYBOARD_AUTH_USERNAME;
+const UI_PASSWORD = process.env.BUNNYBOARD_AUTH_PASSWORD;
+if ((UI_USER !== undefined || UI_PASSWORD !== undefined) && (!UI_USER || !UI_PASSWORD || UI_USER.includes(":"))) fail("set both valid BUNNYBOARD_AUTH_USERNAME and BUNNYBOARD_AUTH_PASSWORD, or neither");
 
 const path = (url) => `${url.replace(/\/$/, "")}/api/agent/boards/${encodeURIComponent(BOARD_ID)}/frames/${encodeURIComponent(FRAME_ID)}`;
 let boardUrl = BOARD_URL;
@@ -118,14 +123,19 @@ function discovered() {
 }
 
 async function callAt(url, op, body) {
-  const headers = { authorization: `Bearer ${BOARD_TOKEN}`, "content-type": "application/json" };
+  const starting = op === "start-frame";
+  const headers = { "content-type": "application/json" };
+  if (starting) {
+    if (UI_USER) headers.authorization = `Basic ${Buffer.from(`${UI_USER}:${UI_PASSWORD}`).toString("base64")}`;
+  } else headers.authorization = `Bearer ${BOARD_TOKEN}`;
   if (PASEO_AGENT_ID) headers["x-paseo-agent-id"] = PASEO_AGENT_ID;
   // In an environment the token goes only to an allowed origin, and redirects are refused
   // (a 307 would otherwise carry the POST and the token somewhere else).
   if (!allowed(url)) throw new Error(`refusing to call ${url}: not one of this environment's origins`);
   // board_read waits for transcript cards (a few seconds at most); nothing takes a minute.
-  const res = await fetch(`${path(url)}/${op}`, { method: "POST", headers, body: JSON.stringify(body ?? {}), redirect: IN_ENV ? "manual" : "follow", signal: AbortSignal.timeout(60_000) });
-  if (IN_ENV && res.status >= 300 && res.status < 400) throw new Error(`refusing a ${res.status} redirect from ${url}`);
+  const endpoint = starting ? `${url.replace(/\/$/, "")}/api/ui/frames/start` : `${path(url)}/${op}`;
+  const res = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body ?? {}), redirect: IN_ENV || starting ? "manual" : "follow", signal: AbortSignal.timeout(60_000) });
+  if ((IN_ENV || starting) && res.status >= 300 && res.status < 400) throw new Error(`refusing a ${res.status} redirect from ${url}`);
   const text = await res.text();
   let json;
   try {
@@ -157,7 +167,10 @@ async function viaDiscovered(op, body, fallback) {
 
 async function call(op, body) {
   let out;
-  try {
+  // A start goes only to the configured board: following server.json could start the same
+  // conversation on another installation and send it this board's UI credentials.
+  if (op === "start-frame") out = await callAt(BOARD_URL, op, body);
+  else try {
     out = await callAt(boardUrl, op, body);
   } catch (e) {
     out = await viaDiscovered(op, body, e);
@@ -218,6 +231,19 @@ const shapeSpec = {
 };
 
 const TOOLS = [
+  {
+    name: "board_start_frame", op: "start-frame",
+    description: "Create a named frame in free space and queue its conversation immediately, without a browser or waiting for Paseo. Retry with the same key and identical input to return the same frame; changed input with that key is refused. Uses board UI auth (BUNNYBOARD_AUTH_USERNAME/PASSWORD when enabled).",
+    inputSchema: { type: "object", properties: {
+      board: {type:"string", description:"Board id", maxLength:64},
+      name: {type:"string", minLength:1, maxLength:200},
+      opener: {type:"string", minLength:1, maxLength:100000},
+      key: {type:"string", minLength:1, maxLength:256, description:"Stable client key; reuse on retries"},
+      provider: {type:"string", maxLength:200},
+      cwd: {type:"string", description:"Absolute directory on the Paseo host", maxLength:4096},
+      near: {type:"string", description:"Shape id on this board; place nearby without overlap", maxLength:256}
+    }, required:["board","name","opener","key"] }
+  },
   {name:'board_channel',description:'List explicit active arrow-channel memberships for this frame, or send one deliberate message with stable messageId. No automatic forwarding. Retrying a message returns the saved receipt, including unknown.',inputSchema:{type:'object',properties:{action:{type:'string',enum:['list','send']},channelId:{type:'string'},messageId:{type:'string'},text:{type:'string'}},required:['action']},op:'channel'},
   {name:'board_video', description:'Video processing frame only: create its two child frames idempotently; prepare review URL; record feedback route receipts. Approval decisions belong to the user. No publishing or automatic sends.', inputSchema:{type:'object',properties:{action:{type:'string',enum:['read','children','review','route']},url:{type:'string'},route:{type:'object',properties:{id:{type:'string'},owner:{type:'string'},sourceClip:{type:'string'},acceptance:{type:'string'},receipt:{type:'string'}},required:['id','owner','sourceClip','acceptance','receipt']}},required:['action']},op:'video'},
   {
@@ -241,10 +267,17 @@ const TOOLS = [
     op: "read",
   },
   {
+    name: "board_read_image",
+    description: "View an attached image or screenshot in YOUR frame. Pass the image shape id from board_read (not the asset id). Returns actual image content for vision, without needing access to the board hostname or host filesystem.",
+    inputSchema: {type:"object",properties:{id:{type:"string",description:"Image shape ID inside your frame"}},required:["id"]},
+    annotations: {readOnlyHint:true},
+    op: "read-image",
+  },
+  {
     name: "board_write",
     description:
-      "Create shapes inside YOUR frame, including portal stickies: a note with portal:{id} (or a page area {x,y,w,h}) links content elsewhere, the way to add more than fits here. Coordinates are frame-relative. A sticky (note) is 200 px wide and holds about 12 words; longer text grows it about 30 px per line, so keep each one to a short headline. Place on the 240 px grid (x 20/260/500/…, y 50/290/530/…) or omit x/y to auto-place. The server rejects writes outside your frame and writes that would overlap another shape (the error names the next free slot), and clamps shapes that overhang the frame edge. type 'link' {board, frameId?, text} is a card that opens another board or frame. A note with portal {id} or page-space {x,y,w,h} links to another place on this board (the person jumps there and back, or expands it in place); board_read shows it as '⤳ portal → …'. Checklist uses title and items [{id,text,checked}] with unique nonempty IDs. Returns the new ids.",
-    inputSchema: { type: "object", properties: { shapes: { type: "array", items: shapeSpec, minItems: 1, maxItems: 50 }, summary: { type: "object", description: "For a requested frame compression only: {requestId,title,decisions:string[],results:string[],openItems:string[],artifacts:[{title,url}]}. The board fits the layout inside the target frame.", additionalProperties: true } }, anyOf: [{required:["shapes"]},{required:["summary"]}] },
+      "Provide shapes (or summary only for a requested compression). Create shapes inside YOUR frame, including portal stickies: a note with portal:{id} (or a page area {x,y,w,h}) links content elsewhere, the way to add more than fits here. Coordinates are frame-relative. A sticky (note) is 200 px wide and holds about 12 words; longer text grows it about 30 px per line, so keep each one to a short headline. Place on the 240 px grid (x 20/260/500/…, y 50/290/530/…) or omit x/y to auto-place. The server rejects writes outside your frame and writes that would overlap another shape (the error names the next free slot), and clamps shapes that overhang the frame edge. type 'link' {board, frameId?, text} is a card that opens another board or frame. A note with portal {id} or page-space {x,y,w,h} links to another place on this board (the person jumps there and back, or expands it in place); board_read shows it as '⤳ portal → …'. Checklist uses title and items [{id,text,checked}] with unique nonempty IDs. Returns the new ids.",
+    inputSchema: { type: "object", properties: { shapes: { type: "array", items: shapeSpec, minItems: 1, maxItems: 50 }, summary: { type: "object", description: "For a requested frame compression only: {requestId,title,decisions:string[],results:string[],openItems:string[],artifacts:[{title,url}]}. The board fits the layout inside the target frame.", additionalProperties: true } } },
     op: "write",
   },
   {
@@ -287,10 +320,19 @@ const TOOLS = [
   },
   {
     name: "board_frame",
-    description: "Resize or rename your own frame (it cannot grow over another frame).",
+    description:
+      "Resize, move or rename your own frame (it cannot grow over another frame or a person's shapes). resize.anchor picks the corner that stays put: 'top-right' grows left, 'bottom-left' grows up. move:'auto' moves the frame and its contents to the nearest free spot that fits (with resize: at the new size); refused if a person placed the frame. A blocked resize says what is in the way, how far each anchor can grow, a free spot, and whether pushing neighbours, an annex frame or asking the person would work.",
     inputSchema: {
       type: "object",
-      properties: { resize: { type: "object", properties: { w: { type: "number" }, h: { type: "number" } }, required: ["w", "h"] }, name: { type: "string" } },
+      properties: {
+        resize: {
+          type: "object",
+          properties: { w: { type: "number" }, h: { type: "number" }, anchor: { type: "string", enum: ["top-left", "top-right", "bottom-left", "bottom-right"], description: "corner that stays in place (default top-left)" } },
+          required: ["w", "h"],
+        },
+        move: { type: "string", enum: ["auto"], description: "move the frame to the nearest free spot that fits it" },
+        name: { type: "string" },
+      },
     },
     op: "frame",
   },
@@ -388,14 +430,15 @@ const TOOLS = [
 const server = new Server({ name: "board", version: "0.2.0" }, { capabilities: { tools: {} } });
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+  tools: TOOLS.filter(t => FRAME_SCOPED || t.name === "board_start_frame").map(({ name, description, inputSchema, annotations }) => ({ name, description, inputSchema, ...(annotations ? {annotations} : {}) })),
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const tool = TOOLS.find((t) => t.name === req.params.name);
-  if (!tool) return { isError: true, content: [{ type: "text", text: `unknown tool ${req.params.name}` }] };
+  if (!tool || (!FRAME_SCOPED && tool.name !== "board_start_frame")) return { isError: true, content: [{ type: "text", text: `unknown tool ${req.params.name}` }] };
   try {
     const out = await call(tool.op, req.params.arguments ?? {});
+    if (tool.op === "read-image") return {content:[{type:"text",text:JSON.stringify({id:out.id,name:out.name})},{type:"image",data:out.data,mimeType:out.mimeType}]};
     const text = typeof out.outline === "string" ? out.outline : JSON.stringify(out, null, 2);
     return { content: [{ type: "text", text }] };
   } catch (e) {

@@ -10,7 +10,7 @@ html.bm-immersive:not(.bm-revealed) [data-testid="organizer-corner"] { display: 
 .bm-immersive-reveal {
   position: fixed; z-index: 2100; top: calc(env(safe-area-inset-top) + 10px); right: calc(env(safe-area-inset-right) + 10px);
   width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; padding: 0;
-  border: 1px solid rgba(255,255,255,.5); border-radius: 999px; background: rgba(46,31,22,.38); color: #fff; cursor: pointer;
+  border: 1px solid light-dark(rgba(255,255,255,.5), color-mix(in srgb, #454d5c 50%, transparent)); border-radius: 999px; background: light-dark(rgba(46,31,22,.38), color-mix(in srgb, hsl(23 35% 21%) 38%, transparent)); color: #fff; cursor: pointer;
   -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); -webkit-tap-highlight-color: transparent;
 }
 .bm-immersive-reveal[aria-pressed="true"] { background: rgba(46,31,22,.7); }

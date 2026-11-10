@@ -1,10 +1,12 @@
+import { AppIcon } from "./components/AppIcon";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { AgentView } from "./agents";
 import { stop } from "./TimelineItemView";
 import { rememberAgentSend } from "./jumpPaletteModel";
 import { PhotoIcon, PhotoTray } from "./mobile/PhotoTray";
 import { type MidTurn, USER_NOTES } from "../../shared/send-capabilities";
-import { composerBegin, composerEdit, composerSends, composerSettle, type ComposerState, deliveryLabel, enterSends, newMessageId, pendingSend, previousSend, type PromptResponse, restoreComposer, type Sent, sendId, settleSend } from "./frameChatDelivery";
+import { canWithdraw, composerBegin, composerEdit, composerSends, composerSettle, composerSettleTracked, type ComposerState, composerWithdraw, deliveryLabel, enterSends, newMessageId, pendingSend, previousSend, type PromptResponse, restoreComposer, type Sent, sendId, settleSend } from "./frameChatDelivery";
+import { agentSummaryChanged } from "./lastSent";
 
 // The reply box shared by the sidebar and transcript cards. Drafts and the last send are
 // kept per agent for the page's lifetime, so popping a card out to the sidebar (or
@@ -66,13 +68,13 @@ function usePendingChecks(agentId: string, state: ComposerState) {
             // the box, and sending that text again reuses this id.
             const error=((await response.json().catch(()=>null)) as {error?:string}|null)?.error;
             const unconfirmed:Sent={...current,outcome:'unconfirmed',detail:`The board can no longer check this message${error?` (${error})`:''}; it may have arrived.`};
-            update(agentId,(s)=>composerSettle(s,unconfirmed));return;
+            update(agentId,(s)=>composerSettleTracked(s,unconfirmed));return;
           }
           if(response.ok||response.status===202){
             const result=await response.json() as PromptResponse;
             if(!active)return;
             const settled=settleSend(current,{response:result});
-            update(agentId,(s)=>composerSettle(s,settled));
+            update(agentId,(s)=>composerSettleTracked(s,settled));
             if(!pendingSend(settled))return;
           }
         }catch{/* Keep the stable id and draft while the board itself reconnects. */}
@@ -94,11 +96,11 @@ export function SendWatcher({ agentId }: { agentId: string }) {
 }
 
 // The newest send and how far it got, for the phone's collapsed thread.
-export function useLastSend(agentId: string, view: AgentView | null, status: string): { text: string; label: { text: string; tone: keyof typeof TONE } } | null {
+export function useLastSend(agentId: string, view: AgentView | null, status: string): { text: string; at: number; label: { text: string; tone: keyof typeof TONE } } | null {
   const state = useSyncExternalStore((n) => subscribe(agentId, n), () => stateFor(agentId));
   if (!state.sent) return null;
   const reply = (view?.rows ?? []).findLast((r) => r.kind === "assistant" && !r.ack && r.text.trim());
-  return { text: state.sent.text, label: deliveryLabel(state.sent, reply?.at ?? null, status) as { text: string; tone: keyof typeof TONE } };
+  return { text: state.sent.text, at: state.sent.at, label: deliveryLabel(state.sent, reply?.at ?? null, status) as { text: string; tone: keyof typeof TONE } };
 }
 
 // Posts a begun send to the prompt route and settles it (the reply box's own path; also
@@ -123,7 +125,24 @@ async function postReply(agentId: string, begun: Sent) {
   } catch {
     settled = {...sending,outcome:"queued",detail:"Board server slow to answer; still trying"};
   }
-  update(agentId, (s) => composerSettle(s, settled));
+  update(agentId, (s) => composerSettleTracked(s, settled));
+}
+
+// Take a queued reply back before it goes out (DELETE on its receipt). The board server
+// refuses (409) once it has tried sending it; then the reply stays and the error says why.
+// edit: its text goes back in the box to be corrected and sent again; remove: it is dropped.
+async function withdrawReply(agentId: string, messageId: string, mode: "edit" | "remove"): Promise<string | null> {
+  try {
+    const res = await fetch(`/api/ui/agents/${encodeURIComponent(agentId)}/prompts/${encodeURIComponent(messageId)}`, { method: "DELETE", signal: AbortSignal.timeout(20000) });
+    const body = (await res.json().catch(() => null)) as PromptResponse | null;
+    if (!res.ok) return body?.error ?? `HTTP ${res.status}`;
+    if (body?.status !== "failed" || body.reason !== "withdrawn") return "The board did not take it back";
+  } catch (e) {
+    return (e as Error)?.message ?? String(e);
+  }
+  update(agentId, (s) => composerWithdraw(s, messageId, mode));
+  agentSummaryChanged(agentId);
+  return null;
 }
 
 // Send `text` to an agent exactly as its reply box would (same delivery tracking, same
@@ -143,9 +162,11 @@ export async function sendReply(agentId: string, text: string): Promise<Sent | n
 // Photos picked on the phone, per agent like drafts, for the page's lifetime.
 const photoDrafts = new Map<string, File[]>();
 
+const smallBtn = (color: string): React.CSSProperties => ({ border: `1px solid ${color}`, color, background: "light-dark(#fff, var(--bunny-surface))", borderRadius: 6, padding: "0 7px", font: "inherit", lineHeight: "16px", cursor: "pointer" });
+
 const TONE = { pending: "#64748b", ok: "#16a34a", working: "#2563eb", warn: "#9c4b00", error: "#b00020" };
 
-export function ChatComposer({ agentId, view, status, canPrompt, unavailable, compact = false, large = false, placeholder, maxHeight, attach, onSent, busyAction }: {
+export function ChatComposer({ agentId, view, status, canPrompt, unavailable, compact = false, large = false, placeholder, maxHeight, attach, onSent, busyAction, turnControls }: {
   agentId: string;
   view: AgentView | null;
   status: string;
@@ -163,6 +184,8 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
   // Phone, like Paseo: while the agent works and the box is empty, this (a Stop button)
   // takes the Send button's place; typing brings Send back.
   busyAction?: React.ReactNode;
+  // The sidebar's Stop / Continue row (TurnControls), shown right above the box.
+  turnControls?: React.ReactNode;
 }) {
   const [photos, setPhotosState] = useState<File[]>(() => photoDrafts.get(agentId) ?? []);
   const setPhotos = (next: File[]) => {
@@ -171,6 +194,25 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
     setPhotosState(next);
   };
   const [photoError, setPhotoError] = useState<string | null>(null);
+  // Edit / Remove on a queued reply: which one is being taken back, and why it could not be.
+  const [withdrawing, setWithdrawing] = useState<string | null>(null);
+  const [withdrawError, setWithdrawError] = useState<string | null>(null);
+  const takeBack = async (messageId: string, taken: string, mode: "edit" | "remove") => {
+    if (withdrawing) return;
+    setWithdrawing(messageId);
+    setWithdrawError(null);
+    const error = await withdrawReply(agentId, messageId, mode);
+    setWithdrawing(null);
+    if (error) setWithdrawError(`Couldn't take it back: ${error}`);
+    else if (mode === "edit") requestAnimationFrame(() => { const el = box.current; if (el) { el.focus(); const end = Math.min(taken.length, el.value.length); el.setSelectionRange(end, end); } });
+  };
+  // A queued reply's Edit and Remove buttons.
+  const queuedActions = (x: Sent) => !x.messageId || !canWithdraw(x) ? null : (
+    <span data-testid="reply-queued-actions" style={{ display: "inline-flex", gap: 4, flex: "none" }}>
+      <button type="button" data-testid="reply-edit" disabled={!!withdrawing} title="Take this message back before it is sent and put it in the box to correct" onClick={() => void takeBack(x.messageId!, x.text, "edit")} style={smallBtn("#2563eb")}>{withdrawing === x.messageId ? "…" : "Edit"}</button>
+      <button type="button" data-testid="reply-remove" disabled={!!withdrawing} title="Take this message back; it is not sent" onClick={() => void takeBack(x.messageId!, x.text, "remove")} style={smallBtn("#b00020")}>Remove</button>
+    </span>
+  );
   const [sendingPhotos, setSendingPhotos] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
@@ -220,7 +262,7 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
     update(agentId, started.next);
     done();
     const { begun } = started;
-    try { await postReply(agentId, begun); }
+    try { await postReply(agentId, begun); agentSummaryChanged(agentId); }
     catch (e) {
       const current = stateFor(agentId).sent;
       const failed: Sent = { ...(current?.at === begun.at ? current : begun), outcome: "failed", detail: `Not sent: ${(e as Error)?.message ?? String(e)}` };
@@ -240,40 +282,46 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
 
   // A send on its way never blocks the next one (the server keeps them in order).
   const ready = canPrompt && (!!text.trim() || (!!attach && photos.length > 0)) && !sendingPhotos;
-  // On a phone the "You: …" lines wrap (up to three lines) instead of being cut to one.
-  const youLine: React.CSSProperties = large ? { color: "#64748b", minWidth: 0, maxWidth: "100%", flex: "1 1 100%", overflowWrap: "anywhere", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" } : { color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, maxWidth: "100%", flex: "0 1 auto" };
+  // On a phone the "You: …" lines take one line next to their status: the message is already
+  // in the thread and in the "You: …" strip above it (hold that for the whole text).
+  const youLine: React.CSSProperties = large ? { color: "light-dark(#64748b, var(--bunny-muted))", minWidth: 0, maxWidth: "45%", flex: "0 1 auto", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } : { color: "light-dark(#64748b, var(--bunny-muted))", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, maxWidth: "100%", flex: "0 1 auto" };
   return (
-    <div data-testid="composer" onPointerDown={stop} onPointerUp={stop} onKeyDown={stop} style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, padding: compact ? "6px 6px 6px" : "8px 10px 10px", borderTop: "1px solid #e2e8f0", background: "#fff", pointerEvents: "all" }}>
+    <div data-testid="composer" onPointerDown={stop} onPointerUp={stop} onKeyDown={stop} style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, padding: compact ? "6px 6px 6px" : "8px 10px 10px", borderTop: "1px solid light-dark(#e2e8f0, var(--bunny-line))", background: "light-dark(#fff, var(--bunny-surface))", pointerEvents: "all" }}>
       {earlier.map((e) => {
         const l = deliveryLabel(e, reply?.at ?? null, status);
         return (
-          <div key={e.messageId ?? e.at} data-testid="reply-earlier" data-outcome={e.outcome} style={{ display: "flex", flexWrap: "wrap", columnGap: 6, fontSize: compact ? 10 : 11, minWidth: 0 }}>
+          <div key={e.messageId ?? e.at} data-testid="reply-earlier" data-outcome={e.outcome} style={{ display: "flex", flexWrap: large ? "nowrap" : "wrap", alignItems: "baseline", columnGap: 6, fontSize: compact ? 10 : 11, minWidth: 0 }}>
             <span style={youLine}>You: “{e.text}”</span>
             <span style={{ color: TONE[l.tone], minWidth: 0 }}>{e.outcome === "failed" || e.outcome === "unconfirmed" ? `${l.text.replace(/ — draft kept$/, "")} · put back in the box` : l.text}</span>
+            {queuedActions(e)}
           </div>
         );
       })}
-      {sent && label ? (
-        <div data-testid="reply-delivery" data-outcome={sent.outcome} style={{ display: "flex", flexWrap: "wrap", columnGap: 6, fontSize: compact ? 10 : 11, minWidth: 0 }}>
+      {/* Phone: once the agent has replied the receipt says nothing new (the reply is right
+          above), so it gives its room back to the thread. */}
+      {sent && label && !(large && label.text === "delivered ✓ · replied") ? (
+        <div data-testid="reply-delivery" data-outcome={sent.outcome} style={{ display: "flex", flexWrap: large ? "nowrap" : "wrap", alignItems: "baseline", columnGap: 6, fontSize: compact ? 10 : 11, minWidth: 0 }}>
           <span style={youLine}>You: “{sent.text}”</span>
           <span style={{ color: TONE[label.tone], minWidth: 0 }}>{label.text}</span>
+          {queuedActions(sent)}
         </div>
       ) : null}
-      {sent?.mode && sent.mode in USER_NOTES ? (
+      {withdrawError ? <div role="alert" data-testid="reply-withdraw-error" style={{ fontSize: compact ? 10 : 11, color: "light-dark(#b00020, hsl(349 88% 74%))" }}>{withdrawError}</div> : null}
+      {sent?.mode && sent.mode in USER_NOTES && !(large && !["sending", "queued", "accepted"].includes(sent.outcome)) ? (
         // What happens to this message if the agent is busy, what can still interrupt it,
         // and what to do (shared/send-capabilities.ts USER_NOTES; the technical version
         // is MODE_NOTES / MISSING_PRIMITIVE, for docs).
-        <details data-testid="reply-mode" data-mode={sent.mode} style={{ fontSize: compact ? 10 : 11, color: "#64748b" }}>
+        <details data-testid="reply-mode" data-mode={sent.mode} style={{ fontSize: compact ? 10 : 11, color: "light-dark(#64748b, var(--bunny-muted))" }}>
           <summary style={{ cursor: "pointer" }}>ⓘ {USER_NOTES[sent.mode as MidTurn].summary}</summary>
           <div>{USER_NOTES[sent.mode as MidTurn].detail}</div>
         </details>
       ) : null}
       {sent?.outcome === "failed" ? (
-        <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: compact ? 10 : 11, color: "#64748b" }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: compact ? 10 : 11, color: "light-dark(#64748b, var(--bunny-muted))" }}>
           {sent.detail ? <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sent.detail}</span> : null}
           <button type="button" data-testid="reply-resend" disabled={!canPrompt}
             onClick={() => void send(true)}
-            style={{ flex: "none", border: "1px solid #b00020", color: "#b00020", background: "#fff", borderRadius: 6, padding: "1px 8px", font: "inherit", cursor: "pointer" }}>
+            style={{ flex: "none", border: "1px solid light-dark(#b00020, hsl(349 35% 39%))", color: "light-dark(#b00020, hsl(349 88% 74%))", background: "light-dark(#fff, var(--bunny-surface))", borderRadius: 6, padding: "1px 8px", font: "inherit", cursor: "pointer" }}>
             Send again
           </button>
         </div>
@@ -284,15 +332,16 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
           <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{sent.receipt}</pre>
         </details>
       ) : null}
+      {turnControls}
       {attach ? <PhotoTray photos={photos} previews={previews} setPhotos={setPhotos} disabled={sendingPhotos} /> : null}
-      {photoError ? <div role="alert" data-testid="reply-photo-error" style={{ fontSize: 11, color: "#b00020" }}>{photoError}</div> : null}
+      {photoError ? <div role="alert" data-testid="reply-photo-error" style={{ fontSize: 11, color: "light-dark(#b00020, hsl(349 88% 74%))" }}>{photoError}</div> : null}
       <form onSubmit={(e) => { e.preventDefault(); void submit(); }} style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
         {attach ? (
           <>
             <input ref={picker} type="file" accept="image/*" multiple hidden data-testid="reply-photo-input"
               onChange={(e) => { const picked = Array.from(e.target.files ?? []); e.target.value = ""; if (picked.length) { setPhotoError(null); setPhotos([...photos, ...picked].slice(0, 6)); } }} />
             <button type="button" data-testid="reply-photo" aria-label="Add photos" title="Add photos" disabled={!canPrompt || sendingPhotos} onClick={() => picker.current?.click()}
-              style={{ flex: "none", width: 44, height: 44, borderRadius: 12, border: "1px solid #cbd5e1", background: "#fff", color: "#2E1F16", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              style={{ flex: "none", width: 44, height: 44, borderRadius: 12, border: "1px solid light-dark(#cbd5e1, hsl(213 35% 39%))", background: "light-dark(#fff, var(--bunny-surface))", color: "light-dark(#2E1F16, var(--bunny-ink))", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <PhotoIcon />
             </button>
           </>
@@ -311,12 +360,12 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
               void submit();
             }
           }}
-          style={{ flex: 1, minWidth: 0, boxSizing: "border-box", resize: "none", border: "1px solid #cbd5e1", borderRadius: 10, padding: compact ? "5px 8px" : "8px 10px", font: "inherit", fontSize: large ? 16 : compact ? 12 : 13, lineHeight: compact ? "16px" : "20px", minHeight: compact ? 28 : 38, maxHeight: maxHeight ?? (compact ? 80 : 160), overflowY: "auto", fieldSizing: "content", background: "#fff", color: "#0f172a" } as React.CSSProperties}
+          style={{ flex: 1, minWidth: 0, boxSizing: "border-box", resize: "none", border: "1px solid light-dark(#cbd5e1, hsl(213 35% 39%))", borderRadius: 10, padding: compact ? "5px 8px" : "8px 10px", font: "inherit", fontSize: large ? 16 : compact ? 12 : 13, lineHeight: compact ? "16px" : "20px", minHeight: compact ? 28 : 38, maxHeight: maxHeight ?? (compact ? 80 : 160), overflowY: "auto", fieldSizing: "content", background: "light-dark(#fff, var(--bunny-surface))", color: "light-dark(#0f172a, hsl(222 50% 74%))" } as React.CSSProperties}
         />
         {busyAction && !text.trim() && !photos.length && !sendingPhotos ? busyAction : (
         <button type="submit" data-testid="reply-send" aria-label="Send" disabled={!ready}
-          style={{ flex: "none", width: compact ? 28 : 38, height: compact ? 28 : 38, borderRadius: compact ? 8 : 10, border: "none", background: ready ? "#2f80ed" : "#cbd5e1", color: "#fff", cursor: ready ? "pointer" : "default", font: `${compact ? 13 : 16}px system-ui` }}>
-          {sendingPhotos ? "…" : "↑"}
+          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", width: compact ? 28 : 38, height: compact ? 28 : 38, borderRadius: compact ? 8 : 10, border: "none", background: ready ? "#2f80ed" : "light-dark(#cbd5e1, hsl(213 27% 21%))", color: "#fff", cursor: ready ? "pointer" : "default", font: `${compact ? 13 : 16}px system-ui` }}>
+          {sendingPhotos ? "…" : <AppIcon name="arrow-up" size={compact ? 16 : 20} />}
         </button>
         )}
       </form>

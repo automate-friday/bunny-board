@@ -27,7 +27,7 @@ function Report({ shape, src }: { shape: TLBookmarkShape; src: string }) {
   const editor = useEditor();
   const locked = useValue("report-lock", () => layoutLockedHere(editor) || editor.isShapeOrAncestorLocked(shape), [editor, shape]);
   const open = shape.props.h >= 300;
-  return <HTMLContainer style={{ width: shape.props.w, height: shape.props.h, border: "1px solid #bbb", borderRadius: 8, background: "white", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+  return <HTMLContainer style={{ width: shape.props.w, height: shape.props.h, border: "1px solid light-dark(#bbb, var(--bunny-line))", borderRadius: 8, background: "light-dark(white, var(--bunny-surface))", overflow: "hidden", display: "flex", flexDirection: "column" }}>
     <div style={{ padding: 8, pointerEvents: "all", font: "12px system-ui", display: "flex", flexWrap: "wrap", gap: 6 }} onPointerDown={e => e.stopPropagation()}>
       <strong>HTML report</strong>
       <button type="button" data-testid="report-toggle" disabled={locked} onClick={() => editor.updateShape({ id: shape.id, type: "bookmark", props: { h: open ? 101 : 440, w: open ? shape.props.w : Math.max(360, shape.props.w) } })}>{open ? "Collapse" : "Open inline"}</button>

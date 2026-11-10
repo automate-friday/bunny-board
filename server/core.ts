@@ -1,3 +1,4 @@
+import { FrameImagesLive } from "./frame-images";
 import { BoardSnapshots } from "./board-snapshots";
 import { configureRuntimeFiles, hasRemoteRuntimeFiles, requestRuntimeFiles } from "./runtime-files";
 import { readFile } from "node:fs/promises";
@@ -20,6 +21,7 @@ import { FrameChannels } from './frame-channels';
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { AgentApi } from "./agent-api";
 import { CloudSessions, cloudCountChanged, defaultCloudRunner } from "./cloud-sessions";
+import { GitHubPrTracker } from "./widgets/github-pr";
 import { claudeActivitySource } from "./widgets/claude-activity";
 import { loadConfig } from "./config";
 import { FrameWatcher } from "./frame-watcher";
@@ -87,21 +89,28 @@ export function contribute(server: PluginServerContext) {
   watcher.subagentCount = (id) => subagents.running(id);
   // ponytail: only agents the board shows; turn events arrive for every daemon agent.
   const checkShown = (id: string) => { if (transcripts.isWatched(id)) subagents.check(id); };
-  transcripts.onWatch = (id) => subagents.check(id);
+  transcripts.onWatch = (id) => {
+    const target = watcher.remoteHostOf(id);
+    if (target) remote?.watchStatus(target, id);
+    subagents.check(id);
+  };
   transcripts.onUnwatch=id=>{subagents.unwatch(id);remote?.unwatchView(id);};
   transcripts.onStatus = (id) => checkShown(id);
-  const agentApi = new AgentApi(cfg, watcher, log, bridge);
+  const agentApi = new AgentApi(cfg, watcher, log, bridge, FrameImagesLive(cfg.assetsDir));
   // Cloud session cards (bin/cloud-task start pins them): status from GitHub and the builder.
   cloud = new CloudSessions(host, defaultCloudRunner(path.dirname(path.dirname(cfg.mcpEntry))), log, (b, f) => watcher.cloudChanged(b, f));
   agentApi.cloudSessions = cloud;
   watcher.cloudCount = (b, f) => cloud?.activeIn(b, f) ?? 0;
-  const widgets = new WidgetHub(defaultWidgetSources([claudeActivitySource(cloud), appSource({ boardOrigins: boardOrigins(cfg.publicBase) })]), log);
-  widgets.plugins = PluginRegistry.inStateDir(cfg.stateDir, log);
+  const plugins = PluginRegistry.inStateDir(cfg.stateDir, log);
+  const prTracker = new GitHubPrTracker(host, plugins, undefined, log);
+  const widgets = new WidgetHub(defaultWidgetSources([prTracker.source, claudeActivitySource(cloud), appSource({ boardOrigins: boardOrigins(cfg.publicBase) })]), log);
+  widgets.plugins = plugins;
+  // Discovery runs even when no canvas viewers are connected.
   watcher.widgets = widgets;
   agentApi.widgets = widgets;
   const directory = new AgentDirectory(bridge, log);
   // Agents on the user's other Macs (af-network); off with config remoteAgents:false.
-  const remote = cfg.remoteAgents ? new RemoteAgents(log) : null;
+  const remote = cfg.remoteAgents ? new RemoteAgents(log, { cacheFile: path.join(cfg.stateDir, "remote-directory.json") }) : null;
   if (remote?.enabled) {
     remote.visible=id=>transcripts.isWatched(id);
     watcher.remote = remote;
@@ -121,7 +130,8 @@ export function contribute(server: PluginServerContext) {
     const binding=host.peek(r.boardId)?.get(r.frameId)?.meta?.paseo;
     return binding?.agentId===r.agentId && (binding.host??null)===r.host && ref?.boardId === r.boardId && ref.frameId === r.frameId;
   }, r => {
-    if(!watcher.isBoundAgent(r.agentId))return false;
+    // A pending start is not an unreachable host: hold says waiting-start instead.
+    if(!watcher.isBoundAgent(r.agentId))return watcher.startPendingFor(r.agentId);
     if(r.kind==='delta' && readLocks(host.peek(r.boardId)?.get('document:document')?.meta).agentsPaused)return false;
     // The board's own daemon socket is all a send needs. Board health also waits for the
     // plugin API, whose bootstrap RPC times out on a busy daemon: sidebar sends then sat
@@ -147,6 +157,9 @@ export function contribute(server: PluginServerContext) {
   // (shared/send-capabilities.ts). Another Mac's agent waits for af-network's status read
   // to say idle; the read is refreshed on demand. Unknown status means hold.
   prompts.hold=async r=>{
+    // The agent's start has not finished (a remote start can take minutes): hold, never
+    // send to an agent the host may not know yet.
+    if(watcher.startPendingFor(r.agentId))return {wait:'waiting-start'};
     // A stop stamp halts the turn on purpose: never wait for it to end.
     if(r.urgent&&!r.host)return {wait:null,mode:'interrupt'};
     if(r.host){
@@ -166,6 +179,7 @@ export function contribute(server: PluginServerContext) {
     const d=sendNow(sendCapabilities({host:null,provider:agent.provider}),busy,r.text);
     return {wait:d.send?null:d.reason,mode:d.mode};
   };
+  prompts.startPending=r=>watcher.startPendingFor(r.agentId);
   prompts.requireStart=true;
   transcripts.onTimeline=(agentId,item)=>{
     const wireId=item.clientMessageId??item.messageId;
@@ -276,6 +290,7 @@ export function contribute(server: PluginServerContext) {
   const cancelStartup = deferredStart(() => {
     video?.restore();
     const rooms = host.loadAll();
+    prTracker.start();
     for (const room of rooms) migrateAssetOrigins(room, cfg.publicBase, log);
     log(`loaded ${rooms.length} board(s): ${rooms.map((r) => r.id).join(", ") || "none"}`);
     uploads=new FrameUploads(path.join(cfg.stateDir,'frame-uploads'),r=>{
@@ -327,6 +342,7 @@ export function contribute(server: PluginServerContext) {
     organizer.stop();
     snapshots.stop();
     host.closeAll();
+    prTracker.stop();
     widgets.closeAll();
     await new Promise<void>((resolve) => {
       if (!httpServer) return resolve();

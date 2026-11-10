@@ -4,6 +4,8 @@
 // - Press and hold (HOLD_MS) on a shape picks it up: it lifts, the phone buzzes, and it follows
 //   the finger. It stays picked up after the finger lifts (sticky): touch it again to drag it
 //   again; a tap on empty canvas (or Done) drops it. Panning and pinching still work meanwhile.
+// - A frame's title tab or border, held (on the board view, anywhere on the frame): the whole
+//   frame, with what is in it (framePush.ts: "Push neighbours aside" makes room around it).
 // - Arrow mode (from + Add): tap the start, then the end (shapes or bare points).
 // Pointer events are read on window, capture phase, before tldraw (and the shell's own tap
 // handlers) see them; a drag of the picked-up shape is kept from tldraw entirely, so it never
@@ -14,6 +16,7 @@ import { type Editor, getDroppedShapesToNewParents, getPointerInfo, kickoutOcclu
 import { deviceLock } from "../locks";
 import { type ArrowEnd, cameraToFill, dragTo, HANDLE_HIT, HOLD_MS, HOLD_SLOP, isDoubleTap, isTap, moved, type Pt } from "./editModel";
 import { immersiveNow } from "./Immersive";
+import { type FrameBox, pushAside } from "./framePush";
 import { beginResizeSession, endResizeSession, handleNear, type Resizing, startResize } from "./resize";
 
 // A touch on the canvas this close to a picked-up shape's handle (centre to centre, px) is that
@@ -54,6 +57,18 @@ export function useEdit(): EditState {
     },
     getEdit,
     getEdit,
+  );
+}
+
+// Just the picked-up shape (MobileShell: the open frame's camera stands still while it is held).
+export function useHeld(): TLShapeId | null {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => state.held,
+    () => state.held,
   );
 }
 
@@ -107,6 +122,47 @@ export function shapeAt(editor: Editor, screen: Pt, opts: { exclude?: string | n
   );
 }
 
+// Inside a frame, another frame (or the open one) is picked up whole by its title tab or its border
+// (frameEdgeAt): its inside is the whiteboard, where holding an item picks up only that item. On
+// the board view a hold anywhere on a frame picks it up. The border is this many screen px either
+// side of the frame's edge.
+export const FRAME_EDGE = 18;
+
+// The topmost frame whose title tab or border is under a screen point, or null. `whole`: anywhere
+// on the frame counts too (the board view, where a frame can be ~20 px across and what is in it
+// is not edited one by one).
+export function frameEdgeAt(editor: Editor, screen: Pt, whole = false): TLShape | null {
+  const p = editor.screenToPage(screen);
+  const m = FRAME_EDGE / (editor.getZoomLevel() || 1);
+  const shapes = editor.getCurrentPageShapesSorted();
+  // Anywhere on a frame: the frame under the finger first (a neighbour's margin or title tab,
+  // which keep a thumb's size at any zoom, can reach over a tiny frame).
+  if (whole) {
+    for (let i = shapes.length - 1; i >= 0; i--) {
+      const f = shapes[i];
+      const b = f.type === "frame" && !f.isLocked ? editor.getShapePageBounds(f.id) : null;
+      if (b && p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return f;
+    }
+  }
+  for (let i = shapes.length - 1; i >= 0; i--) {
+    const f = shapes[i];
+    if (f.type !== "frame" || f.isLocked) continue;
+    const b = editor.getShapePageBounds(f.id);
+    if (!b) continue;
+    const near = p.x >= b.x - m && p.x <= b.x + b.w + m && p.y >= b.y - m && p.y <= b.y + b.h + m;
+    const inside = p.x > b.x + m && p.x < b.x + b.w - m && p.y > b.y + m && p.y < b.y + b.h - m;
+    if (near && (whole || !inside)) return f;
+    // The title tab, above the frame's top-left (its label in the frame's geometry).
+    const label = (editor.getShapeGeometry(f) as { children?: { isLabel?: boolean; bounds: { x: number; y: number; w: number; h: number } }[] }).children?.find((c) => c.isLabel)?.bounds;
+    if (label) {
+      const q = editor.getPointInShapeSpace(f, p);
+      const k = m / 2;
+      if (q.x >= label.x - k && q.x <= label.x + label.w + k && q.y >= label.y - k && q.y <= label.y + label.h + k) return f;
+    }
+  }
+  return null;
+}
+
 // Whether a screen point is on (or within `px` screen px of) a shape.
 function onShape(editor: Editor, id: TLShapeId, screen: Pt, px = 14): boolean {
   const b = editor.getShapePageBounds(id);
@@ -153,6 +209,37 @@ export function setMode(mode: EditState["mode"]) {
   else endResizeSession();
   buzz();
   setEdit({ mode, dragging: false });
+}
+
+// The held frame's sibling frames (same page, or same parent frame), unlocked, as page boxes.
+export function neighbourFrames(editor: Editor, id: TLShapeId): FrameBox[] {
+  const f = editor.getShape(id);
+  if (!f || f.type !== "frame") return [];
+  return editor.getSortedChildIdsForParent(f.parentId).flatMap((cid) => {
+    const s = cid === id ? null : editor.getShape(cid);
+    const b = s && s.type === "frame" && !s.isLocked ? editor.getShapePageBounds(s.id) : null;
+    return b ? [{ id: s!.id as string, x: b.x, y: b.y, w: b.w, h: b.h }] : [];
+  });
+}
+
+// "Push neighbours aside" for the held frame (framePush.ts): the frames it overlaps, and the ones
+// they then crowd, move right or down as wholes (children with them). One undo step; a Resize
+// mode carrying on after it is a step of its own. Returns how many frames moved.
+export function pushNeighbours(editor: Editor, id: TLShapeId): number {
+  const b = editor.getShapePageBounds(id);
+  if (!b || editor.getShape(id)?.type !== "frame") return 0;
+  const moves = pushAside({ id, x: b.x, y: b.y, w: b.w, h: b.h }, neighbourFrames(editor, id));
+  if (!moves.size) return 0;
+  editor.markHistoryStoppingPoint("phone push neighbours");
+  editor.updateShapes(
+    [...moves].flatMap(([sid, d]) => {
+      const s = editor.getShape(sid as TLShapeId);
+      return s ? [{ id: s.id, type: s.type, x: s.x + d.dx, y: s.y + d.dy }] : [];
+    }),
+  );
+  if (state.mode === "resize") beginResizeSession();
+  buzz();
+  return moves.size;
 }
 
 export function drop(editor: Editor) {
@@ -249,7 +336,8 @@ export function installEditGestures(editor: Editor, opts: Opts): () => void {
     if (!drag) return;
     const wasMoved = drag.moved;
     drag = null;
-    if (state.held && wasMoved) settle(editor, state.held);
+    // A frame stays on the page, never dropped into the frame it now sits on.
+    if (state.held && wasMoved && editor.getShape(state.held)?.type !== "frame") settle(editor, state.held);
     setEdit({ dragging: false });
   };
 
@@ -360,8 +448,10 @@ export function installEditGestures(editor: Editor, opts: Opts): () => void {
       return;
     }
     down = { ...p, t: Date.now(), id: e.pointerId, tldraw: true };
-    // The board overview is a map: a hold does not pick anything up (only inside a frame).
-    if (state.arrow || opts.frames() || immersiveNow()) return;
+    // The board overview is a map: a hold there picks up only a whole frame, anywhere on it or
+    // just around it (a drag still pans; the landscape immersive view, none).
+    if (state.arrow || immersiveNow()) return;
+    if (opts.frames() && !frameEdgeAt(editor, p, true)) return;
     timer = setTimeout(() => {
       timer = null;
       holdDone(true);
@@ -374,7 +464,9 @@ export function installEditGestures(editor: Editor, opts: Opts): () => void {
   const holdDone = (fingerDown: boolean) => {
     const d = down;
     if (!d || fingers.size > 1 || otherFinger(d) || !handOn()) return;
-    const hit = shapeAt(editor, d, { exclude: opts.frameId(), frames: opts.frames() });
+    // On the board view a whole frame, anywhere on it; inside a frame, the item under the finger,
+    // else a frame's title tab or border (the open frame's own included): the whole frame.
+    const hit = opts.frames() ? frameEdgeAt(editor, d, true) : (shapeAt(editor, d, { exclude: opts.frameId() }) ?? frameEdgeAt(editor, d));
     if (!hit) return;
     // tldraw's hand tool is waiting to pan this finger: stand it down, then the finger is ours.
     editor.cancel();

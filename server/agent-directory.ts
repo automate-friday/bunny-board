@@ -23,6 +23,7 @@ export interface DirectoryRow {
   // Paseo's own attention flag ("finished", "permission", "error"), or null.
   attention: string | null;
   needsAttention: boolean;
+  attentionTimestamp?: string | null;
   lastActivityAt: string;
   createdAt: string | null;
   archived: boolean;
@@ -39,6 +40,7 @@ export interface ListQuery {
   // Only agents in this workspace (the board's), plus agents bound on `boardId`.
   workspaceId?: string | null;
   includeBound?: boolean;
+  boundBoardId?: string;
   includeArchived?: boolean;
   limit?: number;
   offset?: number;
@@ -95,6 +97,7 @@ export function toRow(entry: any): DirectoryRow {
     status: status === "missing" ? "idle" : status,
     attention: a.requiresAttention ? (a.attentionReason ?? "attention") : null,
     needsAttention: status === "needs-permission" || status === "error" || !!a.requiresAttention,
+    attentionTimestamp: a.attentionTimestamp ?? null,
     lastActivityAt: last,
     createdAt: a.createdAt ?? null,
     archived: !!a.archivedAt,
@@ -115,6 +118,7 @@ export function filterRows(rows: DirectoryRow[], query: ListQuery, boundOf: (age
     if (r.archived && !query.includeArchived) continue;
     const bound = boundOf(r.id);
     if (bound && !query.includeBound) continue;
+    if (query.boundBoardId !== undefined && bound?.boardId !== query.boundBoardId) continue;
     if (query.workspaceId !== undefined && r.workspaceId !== query.workspaceId) continue;
     if (statuses.size) {
       const ok =

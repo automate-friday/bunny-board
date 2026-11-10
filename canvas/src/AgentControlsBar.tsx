@@ -58,7 +58,7 @@ export function AgentControlsBar({ state }: { state: ControlsState }) {
         ),
       )}
       {state.notice ? (
-        <span role="status" data-testid="controls-notice" style={{ fontSize: 11, color: state.notice.tone === "error" ? "#b91c1c" : "#16a34a", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={state.notice.text}>
+        <span role="status" data-testid="controls-notice" style={{ fontSize: 11, color: state.notice.tone === "error" ? "light-dark(#b91c1c, hsl(0 74% 74%))" : "light-dark(#16a34a, hsl(142 76% 74%))", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={state.notice.text}>
           {state.notice.text}
         </span>
       ) : null}
@@ -78,7 +78,7 @@ export function AgentLiveStats({ view, status }: { view: AgentView | null; statu
     <>
       {meter ? (
         <span data-testid="context-meter" title={meter.title} style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 6 }}>
-          <span aria-hidden style={{ display: "inline-block", width: 28, height: 4, borderRadius: 2, background: "#e2e8f0", overflow: "hidden", verticalAlign: "middle" }}>
+          <span aria-hidden style={{ display: "inline-block", width: 28, height: 4, borderRadius: 2, background: "light-dark(#e2e8f0, var(--bunny-raised))", overflow: "hidden", verticalAlign: "middle" }}>
             <span style={{ display: "block", height: "100%", width: `${Math.round(meter.fraction * 100)}%`, background: tone }} />
           </span>
           {meter.label}

@@ -102,7 +102,7 @@ export class ShellErrorBoundary extends Component<{ children: ReactNode; onReset
               this.props.onReset?.();
               this.setState((s) => ({ failed: false, generation: s.generation + 1 }));
             }}
-            style={{ border: 0, borderRadius: 999, padding: "8px 14px", background: "#8875F6", color: "#fff", font: "600 14px Inter, system-ui, sans-serif" }}
+            style={{ border: 0, borderRadius: 999, padding: "8px 14px", background: "light-dark(#8875F6, hsl(249 45% 21%))", color: "#fff", font: "600 14px Inter, system-ui, sans-serif" }}
           >
             Reload view
           </button>

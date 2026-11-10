@@ -22,8 +22,11 @@ export function remoteStatusLabel(
   remote: RemoteEvidence | undefined,
   status: string,
   now = Date.now(),
+  starting = false,
 ): string {
   if (!remote) return status;
+  // A pending (or failed) start has no reads to report: "<host> · starting…", not "checking…".
+  if (starting) return `${remote.host} · ${status}`;
   const pendingOrStale = staleRemoteStatus(remote, now);
   const age = Math.floor(Math.max(0, now - (remote.polledAt ?? now)) / 1000);
   return `${remote.host} · ${pendingOrStale ?? `${status} · ${age}s ago`}`;

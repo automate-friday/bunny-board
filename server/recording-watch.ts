@@ -17,7 +17,7 @@ export class DirectoryRecordingSource {
  private completed:Record<string,string>;private file:string;private ignored:Map<string,string>;private fromMs:number;
  constructor(dir:string,private recordings:string,history:Array<{path:string;sourceFingerprint?:string}>,private intake:(file:string)=>Promise<unknown>,private pollMs=5000,private settleMs=10000,watchFrom=new Date().toISOString(),private probe:(file:string)=>Promise<boolean>=readableRecording,private log:(message:string)=>void=()=>{}){
   mkdirSync(dir,{recursive:true});this.file=path.join(dir,'completed.json');this.completed=existsSync(this.file)?JSON.parse(readFileSync(this.file,'utf8')):{};
-  this.recordings=hasRemoteRuntimeFiles()?path.resolve(recordings):realpathSync(recordings);this.ignored=new Map(history.map(i=>{let p:string;try{p=hasRemoteRuntimeFiles()?path.resolve(i.path):realpathSync(i.path);}catch{p=path.resolve(i.path);}return [p,i.sourceFingerprint??'unverified'];}));this.fromMs=Date.parse(watchFrom);if(!Number.isFinite(this.fromMs))throw new Error('watchFrom must be an ISO timestamp');
+  this.recordings=hasRemoteRuntimeFiles({op:'recordings'})?path.resolve(recordings):realpathSync(recordings);this.ignored=new Map(history.map(i=>{let p:string;try{p=hasRemoteRuntimeFiles({op:'recordings'})?path.resolve(i.path):realpathSync(i.path);}catch{p=path.resolve(i.path);}return [p,i.sourceFingerprint??'unverified'];}));this.fromMs=Date.parse(watchFrom);if(!Number.isFinite(this.fromMs))throw new Error('watchFrom must be an ISO timestamp');
  }
  status(){return {kind:'directory',connected:!this.stopped,lastError:this.lastError,pendingCompletions:this.candidates.size,ignoredPaths:this.ignored.size,recordingsDir:this.recordings,pollMs:Math.max(1000,this.pollMs),pollCount:this.pollCount,lastPollAt:this.lastPollAt};}
  start(){this.log(`video intake: ${this.ignored.size} seeded recordings already processed (handled/skipped); watching ${this.recordings}; polling every ${Math.max(1000,this.pollMs)}ms`);void this.poll();this.timer=setInterval(()=>void this.poll(),Math.max(1000,this.pollMs));this.timer.unref();}
@@ -26,7 +26,7 @@ export class DirectoryRecordingSource {
  async poll(now=Date.now()){
   if(this.stopped||this.polling)return;this.polling=true;this.pollCount++;this.lastPollAt=new Date(now).toISOString();
   try{
-   const remote=hasRemoteRuntimeFiles()?await requestRuntimeFiles({op:'recordings'}):null;
+   const remote=hasRemoteRuntimeFiles({op:'recordings'})?await requestRuntimeFiles({op:'recordings'}):null;
    if(remote&&remote.path!==this.recordings)throw new Error('Runtime recordings root does not match board configuration');
    const remoteEntries=new Map((remote?.recordings??[]).map(f=>[f.path,f]));
    const names=remote?[...remoteEntries.keys()].map(f=>path.basename(f)).sort():readdirSync(this.recordings).filter(n=>/\.(mp4|mov|mkv|webm)$/i.test(n)).sort();

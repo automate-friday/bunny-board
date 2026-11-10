@@ -29,6 +29,9 @@ export class PortalMirror {
   private outgoing = new Map<Id, TLRecord | null>();
   private pushTimer: ReturnType<typeof setTimeout> | undefined;
   private onHide = () => this.push();
+  /** The record being edited in the portal: board changes to it wait until the edit ends. */
+  private editing: Id | null = null;
+  private heldForEdit = new Set<Id>();
 
   constructor(private board: Editor) {
     const src = board.store;
@@ -80,6 +83,20 @@ export class PortalMirror {
     this.stops = [];
   }
 
+  /** The portal started or stopped editing a record. Ending an edit sends it at once and
+   *  then applies any board change to it that waited (the board then holds the edit). */
+  setEditing(id: Id | null): void {
+    if (id === this.editing) return;
+    const ended = this.editing;
+    this.editing = id;
+    if (!ended) return;
+    this.push();
+    if (this.heldForEdit.delete(ended)) {
+      if (this.live) this.later(ended);
+      else this.dirty.add(ended);
+    }
+  }
+
   private queuePush(id: Id, rec: TLRecord | null): void {
     this.outgoing.set(id, rec);
     if (this.pushTimer === undefined) this.pushTimer = setTimeout(() => this.push(), PUSH_MS);
@@ -122,6 +139,11 @@ export class PortalMirror {
     }
     // The portal has a newer version of this record on its way to the board.
     if (this.outgoing.has(id)) return;
+    // Being typed into in the portal: never overwrite it mid-edit; caught up after.
+    if (id === this.editing) {
+      this.heldForEdit.add(id);
+      return;
+    }
     if (!this.live) {
       this.dirty.add(id);
       return;

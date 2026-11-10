@@ -92,10 +92,10 @@ function zoomTo(editor: Editor, ids: string[]): void {
   if (bounds.length) editor.zoomToBounds(Box.Common(bounds), { animation: { duration: 300 }, inset: 80 });
 }
 
-const btn: React.CSSProperties = { padding: "5px 10px", borderRadius: 6, border: "1px solid #bbb", background: "#f7f7f7", cursor: "pointer", font: "inherit", whiteSpace: "nowrap" };
-const primary: React.CSSProperties = { ...btn, background: "#2f80ed", borderColor: "#2f80ed", color: "white" };
-const danger: React.CSSProperties = { ...btn, background: "#fff", borderColor: "#e03131", color: "#c92a2a" };
-const chip: React.CSSProperties = { display: "inline-block", padding: "1px 7px", borderRadius: 10, background: "#f1f3f5", color: "#495057", fontSize: 11, marginRight: 4, marginTop: 3 };
+const btn: React.CSSProperties = { padding: "5px 10px", borderRadius: 6, border: "1px solid light-dark(#bbb, var(--bunny-line))", background: "light-dark(#f7f7f7, var(--bunny-raised))", cursor: "pointer", font: "inherit", whiteSpace: "nowrap" };
+const primary: React.CSSProperties = { ...btn, background: "#2f80ed", borderColor: "light-dark(#2f80ed, hsl(214 35% 39%))", color: "white" };
+const danger: React.CSSProperties = { ...btn, background: "light-dark(#fff, var(--bunny-surface))", borderColor: "light-dark(#e03131, hsl(0 35% 39%))", color: "light-dark(#c92a2a, hsl(0 65% 74%))" };
+const chip: React.CSSProperties = { display: "inline-block", padding: "1px 7px", borderRadius: 10, background: "light-dark(#f1f3f5, var(--bunny-raised))", color: "light-dark(#495057, var(--bunny-muted))", fontSize: 11, marginRight: 4, marginTop: 3 };
 
 // Archive's place in the Board menu (BoardMenu.tsx), not the header: one row with the
 // archived count and how many frames wait in agents' clean-up proposals.
@@ -139,10 +139,10 @@ export function ProposalBanner({ editor }: { editor: Editor }) {
   return (
     <div
       data-testid="proposal-banner"
-      style={{ position: "absolute", top: 58, left: "50%", transform: "translateX(-50%)", zIndex: 400, pointerEvents: "all", display: "flex", gap: 10, alignItems: "center", background: "#fff8e6", border: "1px solid #f0c36d", borderRadius: 10, padding: "6px 8px 6px 12px", boxShadow: "0 2px 10px rgba(0,0,0,0.1)", font: "13px system-ui, sans-serif", maxWidth: "90vw" }}
+      style={{ position: "absolute", top: 58, left: "50%", transform: "translateX(-50%)", zIndex: 400, pointerEvents: "all", display: "flex", gap: 10, alignItems: "center", background: "light-dark(#fff8e6, hsl(43 45% 21%))", border: "1px solid light-dark(#f0c36d, hsl(39 35% 39%))", borderRadius: 10, padding: "6px 8px 6px 12px", boxShadow: "0 2px 10px rgba(0,0,0,0.1)", font: "13px system-ui, sans-serif", maxWidth: "90vw" }}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <Emoji name="broom" style={{ color: "#b35c00" }} />
+      <Emoji name="broom" style={{ color: "light-dark(#b35c00, hsl(31 88% 74%))" }} />
       <span>
         <b>{p.by}</b> proposes archiving {plural(p.count, "frame")}
         {summary!.pending.length > 1 ? ` (+${summary!.pending.length - 1} more proposal${summary!.pending.length > 2 ? "s" : ""})` : ""}
@@ -156,6 +156,7 @@ export function ProposalBanner({ editor }: { editor: Editor }) {
 
 // The archived frame drawn from its snapshot (the same renderer as History's overlay).
 function Preview({ editor, boardId, item, shapeUtils }: { editor: Editor; boardId: string; item: ArchivedItem; shapeUtils: readonly TLAnyShapeUtilConstructor[] }) {
+  const darkMode = useValue("archive-theme", () => editor.user.getIsDarkMode(), [editor]);
   const [records, setRecords] = useState<Rec[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
@@ -175,11 +176,11 @@ function Preview({ editor, boardId, item, shapeUtils }: { editor: Editor; boardI
     return { store, schema: editor.store.schema.serialize() };
   }, [records, editor]);
   const bounds = useMemo(() => new Box(0, 0, item.w, item.h), [item.w, item.h]);
-  if (err) return <div style={{ color: "#c92a2a", fontSize: 12 }}>{err}</div>;
-  if (!snapshot) return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>Loading preview…</div>;
+  if (err) return <div style={{ color: "light-dark(#c92a2a, hsl(0 65% 74%))", fontSize: 12 }}>{err}</div>;
+  if (!snapshot) return <div style={{ color: "light-dark(#888, var(--bunny-muted))", fontSize: 12, padding: 8 }}>Loading preview…</div>;
   return (
-    <div data-testid="archive-preview" style={{ border: "1px solid #e5e5e5", borderRadius: 6, overflow: "hidden", background: "#fbfaf7", aspectRatio: `${item.w} / ${item.h}`, maxHeight: 240 }}>
-      <TldrawImage licenseKey={TLDRAW_LICENSE_KEY} snapshot={snapshot as never} shapeUtils={shapeUtils} pageId={"page:archive" as never} bounds={bounds} padding={8} background />
+    <div data-testid="archive-preview" style={{ border: "1px solid light-dark(#e5e5e5, var(--bunny-line))", borderRadius: 6, overflow: "hidden", background: "light-dark(#fbfaf7, var(--bunny-surface))", aspectRatio: `${item.w} / ${item.h}`, maxHeight: 240 }}>
+      <TldrawImage licenseKey={TLDRAW_LICENSE_KEY} snapshot={snapshot as never} shapeUtils={shapeUtils} pageId={"page:archive" as never} darkMode={darkMode} bounds={bounds} padding={8} background />
     </div>
   );
 }
@@ -267,8 +268,8 @@ export function ArchivePanel({ editor, boardId, shapeUtils, sheet }: { editor: E
       onPointerDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
       style={{
-        ...(sheet ? { position: "fixed", left: 0, right: 0, bottom: 0, height: "70vh", borderTop: "1px solid #ddd" } : { width: 400, borderLeft: "1px solid #ddd" }),
-        background: "white",
+        ...(sheet ? { position: "fixed", left: 0, right: 0, bottom: 0, height: "70vh", borderTop: "1px solid light-dark(#ddd, var(--bunny-line))" } : { width: 400, borderLeft: "1px solid light-dark(#ddd, var(--bunny-line))" }),
+        background: "light-dark(white, var(--bunny-surface))",
         display: "flex",
         flexDirection: "column",
         font: "13px system-ui, sans-serif",
@@ -276,31 +277,31 @@ export function ArchivePanel({ editor, boardId, shapeUtils, sheet }: { editor: E
         minHeight: 0,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: "1px solid #eee" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: "1px solid light-dark(#eee, var(--bunny-line))" }}>
         <Emoji name="archive" />
         <b style={{ flex: 1, fontSize: 15 }}>Archive</b>
         <button type="button" style={btn} data-testid="archive-close" onClick={ctx.close}>
           Close
         </button>
       </div>
-      <div style={{ display: "flex", borderBottom: "1px solid #eee" }}>
+      <div style={{ display: "flex", borderBottom: "1px solid light-dark(#eee, var(--bunny-line))" }}>
         {(["archived", "proposals"] as const).map((t) => (
           <button
             key={t}
             type="button"
             data-testid={`archive-tab-${t}`}
             onClick={() => ctx.open(t)}
-            style={{ flex: 1, padding: "8px 0", border: "none", borderBottom: tab === t ? "2px solid #2f80ed" : "2px solid transparent", background: "none", cursor: "pointer", font: "inherit", fontWeight: tab === t ? 600 : 400 }}
+            style={{ flex: 1, padding: "8px 0", border: "none", borderBottom: tab === t ? "2px solid light-dark(#2f80ed, hsl(214 35% 39%))" : "2px solid transparent", background: "none", cursor: "pointer", font: "inherit", fontWeight: tab === t ? 600 : 400 }}
           >
             {t === "archived" ? `Archived (${items?.length ?? summary?.archived ?? 0})` : `Clean-up proposals${pending.length ? ` (${pending.length})` : ""}`}
           </button>
         ))}
       </div>
-      {err ? <div style={{ color: "#c92a2a", padding: "6px 12px" }}>{err}</div> : null}
+      {err ? <div style={{ color: "light-dark(#c92a2a, hsl(0 65% 74%))", padding: "6px 12px" }}>{err}</div> : null}
       {tab === "archived" ? (
         <>
-          <div style={{ padding: "8px 12px", display: "flex", gap: 6, alignItems: "center", borderBottom: "1px solid #f1f1f1", flexWrap: "wrap" }}>
-            <input data-testid="archive-search" placeholder="Search archived frames" value={query} onChange={(e) => setQuery(e.target.value)} style={{ flex: 1, minWidth: 140, padding: "5px 8px", border: "1px solid #ccc", borderRadius: 6, font: "inherit" }} />
+          <div style={{ padding: "8px 12px", display: "flex", gap: 6, alignItems: "center", borderBottom: "1px solid light-dark(#f1f1f1, var(--bunny-line))", flexWrap: "wrap" }}>
+            <input data-testid="archive-search" placeholder="Search archived frames" value={query} onChange={(e) => setQuery(e.target.value)} style={{ flex: 1, minWidth: 140, padding: "5px 8px", border: "1px solid light-dark(#ccc, var(--bunny-line))", borderRadius: 6, font: "inherit" }} />
             {pickedIds.length ? (
               confirmDelete ? null : (
                 <>
@@ -315,7 +316,7 @@ export function ArchivePanel({ editor, boardId, shapeUtils, sheet }: { editor: E
             ) : null}
           </div>
           {confirmDelete ? (
-            <div data-testid="archive-confirm-delete" style={{ margin: "8px 12px", padding: 10, border: "1px solid #ffc9c9", background: "#fff5f5", borderRadius: 8 }}>
+            <div data-testid="archive-confirm-delete" style={{ margin: "8px 12px", padding: 10, border: "1px solid light-dark(#ffc9c9, hsl(0 35% 39%))", background: "light-dark(#fff5f5, var(--bunny-surface))", borderRadius: 8 }}>
               Delete {plural(confirmDelete.length, "archived frame")} forever? Their contents and History go too. This cannot be undone.
               <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
                 <button type="button" style={{ ...danger, background: "#e03131", color: "white" }} disabled={busy} data-testid="archive-confirm-delete-yes" onClick={() => void purge(confirmDelete)}>
@@ -329,7 +330,7 @@ export function ArchivePanel({ editor, boardId, shapeUtils, sheet }: { editor: E
           ) : null}
           <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }} data-testid="archive-list">
             {items && !items.length ? (
-              <div style={{ color: "#777", padding: 16, lineHeight: 1.5 }}>
+              <div style={{ color: "light-dark(#777, var(--bunny-muted))", padding: 16, lineHeight: 1.5 }}>
                 Nothing archived. Right-click a frame (or several) and choose <b>Archive</b> to take it off the board without losing it.
               </div>
             ) : null}
@@ -337,8 +338,8 @@ export function ArchivePanel({ editor, boardId, shapeUtils, sheet }: { editor: E
               const ids = g.items.map((i) => i.id);
               const all = ids.every((id) => picked.has(id));
               return (
-                <div key={`${g.title}-${ids[0]}`} data-testid="archive-group" style={{ borderBottom: "1px solid #f1f1f1" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px 4px", color: "#555", fontSize: 12 }}>
+                <div key={`${g.title}-${ids[0]}`} data-testid="archive-group" style={{ borderBottom: "1px solid light-dark(#f1f1f1, var(--bunny-line))" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px 4px", color: "light-dark(#555, var(--bunny-muted))", fontSize: 12 }}>
                     <input type="checkbox" checked={all} onChange={(e) => toggle(ids, e.target.checked)} title="Select this group" />
                     <span style={{ flex: 1 }}>
                       {g.title} · {relTime(new Date(g.items[0].archivedAt).toISOString())}
@@ -349,14 +350,14 @@ export function ArchivePanel({ editor, boardId, shapeUtils, sheet }: { editor: E
                       </button>
                     ) : null}
                   </div>
-                  {g.items[0].reason && g.items[0].proposalId ? <div style={{ padding: "0 12px 4px 34px", color: "#777", fontSize: 12, fontStyle: "italic" }}>“{g.items[0].reason}”</div> : null}
+                  {g.items[0].reason && g.items[0].proposalId ? <div style={{ padding: "0 12px 4px 34px", color: "light-dark(#777, var(--bunny-muted))", fontSize: 12, fontStyle: "italic" }}>“{g.items[0].reason}”</div> : null}
                   {g.items.map((i) => (
-                    <div key={i.id} data-testid="archive-row" data-frame={i.frameId} style={{ padding: "6px 12px 6px 12px", background: picked.has(i.id) ? "#f3f8ff" : undefined }}>
+                    <div key={i.id} data-testid="archive-row" data-frame={i.frameId} style={{ padding: "6px 12px 6px 12px", background: picked.has(i.id) ? "light-dark(#f3f8ff, var(--bunny-surface))" : undefined }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                         <input type="checkbox" checked={picked.has(i.id)} onChange={(e) => toggle([i.id], e.target.checked)} />
                         <button type="button" onClick={() => setOpen(open === i.id ? null : i.id)} style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", font: "inherit" }} title="Show a preview">
                           <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{i.name}</div>
-                          <div style={{ color: "#777", fontSize: 12 }}>
+                          <div style={{ color: "light-dark(#777, var(--bunny-muted))", fontSize: 12 }}>
                             {plural(i.shapes, "shape")}
                             {i.agents.length ? ` · had ${plural(i.agents.length, "conversation")}` : ""} · {relTime(new Date(i.archivedAt).toISOString())}
                           </div>
@@ -383,21 +384,21 @@ export function ArchivePanel({ editor, boardId, shapeUtils, sheet }: { editor: E
               );
             })}
           </div>
-          <div style={{ padding: "6px 12px", color: "#888", fontSize: 11, borderTop: "1px solid #eee" }}>Restored frames go back where they were. A frame that had a conversation comes back unbound, with Re-link.</div>
+          <div style={{ padding: "6px 12px", color: "light-dark(#888, var(--bunny-muted))", fontSize: 11, borderTop: "1px solid light-dark(#eee, var(--bunny-line))" }}>Restored frames go back where they were. A frame that had a conversation comes back unbound, with Re-link.</div>
         </>
       ) : (
         <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }} data-testid="proposal-list">
           {!pending.length ? (
-            <div style={{ color: "#777", padding: 16, lineHeight: 1.5 }}>
+            <div style={{ color: "light-dark(#777, var(--bunny-muted))", padding: 16, lineHeight: 1.5 }}>
               No proposals waiting. Ask a frame's agent to tidy the board: it lists stale frames (board_archive_candidates) and proposes archiving them (board_archive). Nothing leaves the board until you approve it here.
             </div>
           ) : null}
           {pending.map((p) => (
             <ProposalCard key={p.id} p={p} editor={editor} boardId={boardId} busy={busy} run={run} />
           ))}
-          {decided.length ? <div style={{ padding: "10px 12px 4px", color: "#888", fontSize: 12 }}>Earlier proposals</div> : null}
+          {decided.length ? <div style={{ padding: "10px 12px 4px", color: "light-dark(#888, var(--bunny-muted))", fontSize: 12 }}>Earlier proposals</div> : null}
           {decided.map((p) => (
-            <div key={p.id} style={{ padding: "4px 12px", color: "#666", fontSize: 12 }}>
+            <div key={p.id} style={{ padding: "4px 12px", color: "light-dark(#666, var(--bunny-muted))", fontSize: 12 }}>
               {p.by.frameName}: {plural(p.items.length, "frame")} ·{" "}
               {p.status === "approved" ? `approved by ${p.decidedBy}, ${p.archived ?? 0} archived${p.skipped?.length ? `, ${p.skipped.length} skipped` : ""}` : `dismissed${p.decidedBy && p.decidedBy !== "replaced by a newer proposal" ? ` by ${p.decidedBy}` : p.decidedBy ? ` (${p.decidedBy})` : ""}`} ·{" "}
               {relTime(new Date(p.decidedAt ?? p.at).toISOString())}
@@ -425,16 +426,16 @@ function ProposalCard({ p, editor, boardId, busy, run }: { p: Proposal; editor: 
       ctx.open("archived");
     });
   return (
-    <div data-testid="proposal-card" style={{ margin: 10, border: "1px solid #f0c36d", background: "#fffdf6", borderRadius: 10 }}>
+    <div data-testid="proposal-card" style={{ margin: 10, border: "1px solid light-dark(#f0c36d, hsl(39 35% 39%))", background: "light-dark(#fffdf6, var(--bunny-surface))", borderRadius: 10 }}>
       <div style={{ padding: "10px 12px 6px" }}>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <Emoji name="broom" style={{ color: "#b35c00" }} />
+          <Emoji name="broom" style={{ color: "light-dark(#b35c00, hsl(31 88% 74%))" }} />
           <b style={{ flex: 1 }}>
             {p.by.frameName} proposes archiving {plural(p.items.length, "frame")}
           </b>
-          <span style={{ color: "#888", fontSize: 12 }}>{relTime(new Date(p.at).toISOString())}</span>
+          <span style={{ color: "light-dark(#888, var(--bunny-muted))", fontSize: 12 }}>{relTime(new Date(p.at).toISOString())}</span>
         </div>
-        <div style={{ color: "#555", marginTop: 4, fontStyle: "italic" }}>“{p.reason}”</div>
+        <div style={{ color: "light-dark(#555, var(--bunny-muted))", marginTop: 4, fontStyle: "italic" }}>“{p.reason}”</div>
       </div>
       <div style={{ display: "flex", gap: 6, padding: "0 12px 8px", alignItems: "center", fontSize: 12 }}>
         <label style={{ display: "flex", gap: 4, alignItems: "center", flex: 1 }}>
@@ -445,7 +446,7 @@ function ProposalCard({ p, editor, boardId, busy, run }: { p: Proposal; editor: 
           Show on board
         </button>
       </div>
-      <div style={{ maxHeight: 340, overflowY: "auto", borderTop: "1px solid #f3e3bd", borderBottom: "1px solid #f3e3bd" }}>
+      <div style={{ maxHeight: 340, overflowY: "auto", borderTop: "1px solid light-dark(#f3e3bd, hsl(42 35% 39%))", borderBottom: "1px solid light-dark(#f3e3bd, hsl(42 35% 39%))" }}>
         {p.items.map((i) => (
           <label key={i.frameId} data-testid="proposal-item" style={{ display: "flex", gap: 6, padding: "5px 12px", alignItems: "flex-start", cursor: "pointer" }} onMouseEnter={() => editor.getShape(i.frameId as TLShapeId) && editor.setHoveredShape(i.frameId as TLShapeId)}>
             <input
@@ -479,7 +480,7 @@ function ProposalCard({ p, editor, boardId, busy, run }: { p: Proposal; editor: 
           Dismiss
         </button>
       </div>
-      <div style={{ padding: "0 12px 10px", color: "#888", fontSize: 11 }}>Archived frames can be restored from the Archive tab. Frames edited after the proposal are left on the board.</div>
+      <div style={{ padding: "0 12px 10px", color: "light-dark(#888, var(--bunny-muted))", fontSize: 11 }}>Archived frames can be restored from the Archive tab. Frames edited after the proposal are left on the board.</div>
     </div>
   );
 }

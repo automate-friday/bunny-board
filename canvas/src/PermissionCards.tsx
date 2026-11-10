@@ -29,7 +29,7 @@ export function PermissionCards({ state, paseoLink, compact = false }: { state: 
   const c = state.controls;
   if (!c || state.unsupported || !c.can.permissions || !c.pendingPermissions.length) return null;
   return (
-    <div data-testid="permission-cards" className={compact ? "tl-compact" : undefined} onPointerDown={stop} onWheel={stop} style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 6, padding: compact ? "4px 6px" : "8px 10px 0", maxHeight: compact ? 160 : "45%", overflowY: "auto", background: "#fff" }}>
+    <div data-testid="permission-cards" className={compact ? "tl-compact" : undefined} onPointerDown={stop} onWheel={stop} style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 6, padding: compact ? "4px 6px" : "8px 10px 0", maxHeight: compact ? 160 : "45%", overflowY: "auto", background: "light-dark(#fff, var(--bunny-surface))" }}>
       {c.pendingPermissions.map((p) => (
         <PermissionCard key={p.id} request={p} state={state} paseoLink={paseoLink} compact={compact} />
       ))}
@@ -61,10 +61,10 @@ function PermissionCard({ request, state, paseoLink, compact }: { request: Permi
   const hasBody = !!request.description || !!planText || (!!detail && !isQuestion);
 
   return (
-    <div data-testid="permission-card" data-kind={request.kind ?? "tool"} role="group" aria-label={title} style={{ border: "1px solid #fde4c4", background: "#fffbf5", borderRadius: 10, padding: compact ? "5px 7px" : "8px 10px", display: "flex", flexDirection: "column", gap: 6, fontSize: compact ? 11.5 : 12.5, minWidth: 0 }}>
+    <div data-testid="permission-card" data-kind={request.kind ?? "tool"} role="group" aria-label={title} style={{ border: "1px solid light-dark(#fde4c4, hsl(34 35% 39%))", background: "light-dark(#fffbf5, var(--bunny-surface))", borderRadius: 10, padding: compact ? "5px 7px" : "8px 10px", display: "flex", flexDirection: "column", gap: 6, fontSize: compact ? 11.5 : 12.5, minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-        <Glyph name={isPlan ? "brain" : isQuestion ? "info" : "alert"} color="#b45309" />
-        <span style={{ fontWeight: 600, color: "#7c2d12", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }} title={title}>
+        <Glyph name={isPlan ? "brain" : isQuestion ? "info" : "alert"} color="light-dark(#b45309, hsl(26 88% 74%))" />
+        <span style={{ fontWeight: 600, color: "light-dark(#7c2d12, hsl(15 75% 74%))", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }} title={title}>
           {title}
         </span>
         {hasBody ? (
@@ -73,7 +73,7 @@ function PermissionCard({ request, state, paseoLink, compact }: { request: Permi
           </button>
         ) : null}
       </div>
-      {open && request.description ? <div style={{ color: "#475569", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{request.description}</div> : null}
+      {open && request.description ? <div style={{ color: "light-dark(#475569, var(--bunny-muted))", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{request.description}</div> : null}
       {open && planText ? (
         <div className="tl-pre" style={{ fontFamily: "inherit", fontSize: compact ? 11.5 : 12.5, maxHeight: compact ? 140 : 260 }}>
           <MessageBody text={planText} compact={compact} />
@@ -88,8 +88,8 @@ function PermissionCard({ request, state, paseoLink, compact }: { request: Permi
         questions && !compact ? (
           <QuestionForm questions={questions} busy={busy} onSubmit={(answers) => void respond("submit", { behavior: "allow", updatedInput: { ...(request.input as object), answers } })} onDismiss={(label) => void respond("dismiss", shouldSubmitEmptyOnDismiss(questions) ? { behavior: "allow", updatedInput: { ...(request.input as object), answers: buildQuestionFormAnswers(questions, {}, {}) } } : { behavior: "deny", message: `${label} (dismissed by user)` })} dismissLabel={resolveDismissLabel(questions)} />
         ) : (
-          <div style={{ color: "#475569" }}>
-            <PaseoLink link={paseoLink ?? { url: null, hidden: false, reason: "No Paseo server id configured." }} testId="permission-answer-in-paseo" onPointerDown={stop} style={{ color: "#2f80ed" }}>Answer in Paseo</PaseoLink>
+          <div style={{ color: "light-dark(#475569, var(--bunny-muted))" }}>
+            <PaseoLink link={paseoLink ?? { url: null, hidden: false, reason: "No Paseo server id configured." }} testId="permission-answer-in-paseo" onPointerDown={stop} style={{ color: "light-dark(#2f80ed, hsl(214 84% 74%))" }}>Answer in Paseo</PaseoLink>
           </div>
         )
       ) : (
@@ -137,13 +137,13 @@ function QuestionForm({ questions, busy, onSubmit, onDismiss, dismissLabel }: { 
     >
       {questions.map((q, qi) => (
         <fieldset key={q.header} style={{ border: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
-          <legend style={{ padding: 0, fontWeight: 600, color: "#334155" }}>{q.question}</legend>
+          <legend style={{ padding: 0, fontWeight: 600, color: "light-dark(#334155, hsl(215 50% 74%))" }}>{q.question}</legend>
           {q.options.map((opt, oi) => (
             <label key={opt.label} style={{ display: "flex", gap: 6, alignItems: "flex-start", cursor: "pointer" }}>
               <input type={q.multiSelect ? "checkbox" : "radio"} name={`q-${qi}`} checked={selections[qi]?.has(oi) ?? false} onChange={() => toggle(qi, oi, q.multiSelect)} disabled={busy} />
               <span>
                 {opt.label}
-                {opt.description ? <span style={{ color: "#64748b" }}> · {opt.description}</span> : null}
+                {opt.description ? <span style={{ color: "light-dark(#64748b, var(--bunny-muted))" }}> · {opt.description}</span> : null}
               </span>
             </label>
           ))}
@@ -158,7 +158,7 @@ function QuestionForm({ questions, busy, onSubmit, onDismiss, dismissLabel }: { 
                 setOtherTexts((prev) => ({ ...prev, [qi]: value }));
                 if (!q.multiSelect && value) setSelections((prev) => ({ ...prev, [qi]: new Set() }));
               }}
-              style={{ font: "inherit", fontSize: 12, border: "1px solid #cbd5e1", borderRadius: 8, padding: "4px 8px" }}
+              style={{ font: "inherit", fontSize: 12, border: "1px solid light-dark(#cbd5e1, hsl(213 35% 39%))", borderRadius: 8, padding: "4px 8px" }}
             />
           ) : null}
         </fieldset>

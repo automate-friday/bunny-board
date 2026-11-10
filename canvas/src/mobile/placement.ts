@@ -2,11 +2,14 @@
 // the one you are in, on the same page, in free space (never on top of another frame).
 
 type Box = { x: number; y: number; w: number; h: number };
+// The standard space between frames on a page: where a new frame goes beside another, and how
+// far "Push neighbours aside" moves a frame (framePush.ts).
+export const FRAME_GAP = 80;
 const overlaps = (a: Box, b: Box, gap: number) => a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap;
 
 // Right of the source first (top-aligned), then below it, then left, then above; each side
 // slides outward past whatever is in the way.
-export function besideFrame(source: Box, others: readonly Box[], size = { w: 960, h: 640 }, gap = 80, tries = 40): { x: number; y: number } {
+export function besideFrame(source: Box, others: readonly Box[], size = { w: 960, h: 640 }, gap = FRAME_GAP, tries = 40): { x: number; y: number } {
   const free = (b: Box) => !others.some((o) => overlaps(b, o, gap / 2));
   const sides: ((n: number) => Box)[] = [
     (n) => ({ x: source.x + source.w + gap + n * (size.w / 4), y: source.y, ...size }),

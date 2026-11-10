@@ -84,7 +84,8 @@ export function portalSuffix(records: RecMap, s: Rec): string {
     return ` ⤳ portal → area @page(${p.x},${p.y}) ${p.w}x${p.h}${where}`;
   }
   const t = records.get(p.id);
-  if (!isShape(t)) return ` ⤳ portal → ${p.id} (missing)`;
+  // The target was deleted: the link stays in meta (an undo brings it back), but it leads nowhere.
+  if (!isShape(t)) return ` ⤳ portal → missing target (${p.id})`;
   if (t.type === "frame") return ` ⤳ portal → frame ${quote(t.props.name || "(unnamed)", 40)} (${t.id})`;
   const f = enclosingFrame(records, t);
   return ` ⤳ portal → ${describeShape(t, 40)} (${t.id})${f ? ` in frame ${quote(f.props.name || "(unnamed)", 40)} (${f.id})` : ""}`;

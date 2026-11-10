@@ -2,17 +2,17 @@
 .bm-jumps { position: relative; flex: none; display: inline-flex; gap: 6px; align-items: center; }
 .bm-jumps .bm-backto { min-height: 34px; }
 .bm-fwd {
-  flex: none; width: 40px; min-height: 34px; padding: 0; border-radius: 999px; border: 1px solid var(--bm-line, rgba(46,31,22,.12));
-  background: #FFF8EBee; font: 700 16px Inter, system-ui, sans-serif !important; color: #2E1F16; cursor: pointer; box-shadow: 0 2px 8px rgba(46,31,22,.08);
+  flex: none; width: 40px; min-height: 34px; padding: 0; border-radius: 999px; border: 1px solid var(--bm-line, light-dark(rgba(46,31,22,.12), color-mix(in srgb, hsl(23 35% 39%) 12%, transparent)));
+  background: light-dark(#FFF8EBee, color-mix(in srgb, #20242c 93%, transparent)); font: 700 16px Inter, system-ui, sans-serif !important; color: light-dark(#2E1F16, var(--bunny-ink)); cursor: pointer; box-shadow: 0 2px 8px rgba(46,31,22,.08);
 }
 .bm-jump-list {
   position: absolute; top: calc(100% + 6px); left: 0; z-index: 396; min-width: 220px; max-width: calc(100vw - 24px); max-height: 50vh; overflow-y: auto;
-  display: flex; flex-direction: column; padding: 6px; background: #fff; border: 1px solid rgba(46,31,22,.12); border-radius: 14px; box-shadow: 0 12px 34px rgba(46,31,22,.22);
+  display: flex; flex-direction: column; padding: 6px; background: light-dark(#fff, var(--bunny-surface)); border: 1px solid light-dark(rgba(46,31,22,.12), color-mix(in srgb, hsl(23 35% 39%) 12%, transparent)); border-radius: 14px; box-shadow: 0 12px 34px rgba(46,31,22,.22);
 }
 .bm-jump-list button {
   display: flex; align-items: baseline; gap: 8px; min-height: 44px; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; text-align: left; cursor: pointer;
-  font: 600 14px Inter, system-ui, sans-serif !important; color: #2E1F16; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font: 600 14px Inter, system-ui, sans-serif !important; color: light-dark(#2E1F16, var(--bunny-ink)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.bm-jump-list button:active { background: #EFE8FE; }
-.bm-jump-list small { flex: none; width: 48px; font-size: 11px; font-weight: 500; color: rgba(46,31,22,.6); }
+.bm-jump-list button:active { background: light-dark(#EFE8FE, hsl(259 45% 21%)); }
+.bm-jump-list small { flex: none; width: 48px; font-size: 11px; font-weight: 500; color: light-dark(rgba(46,31,22,.6), color-mix(in srgb, #edf0f7 60%, transparent)); }
 @media (orientation: landscape) { .bm-jump-list { top: auto; bottom: auto; top: calc(100% + 4px); } }

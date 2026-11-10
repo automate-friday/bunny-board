@@ -5,11 +5,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { createShapeId, type Editor, type TLShapeId, toRichText, useValue } from "tldraw";
-import { coverTop, drop, getEdit, installEditGestures, liftDeviceLock, pickUp, SHEET, setEdit, setMode, settle, useEdit, visibleBand } from "./editGestures";
+import { coverTop, drop, getEdit, installEditGestures, liftDeviceLock, neighbourFrames, pickUp, pushNeighbours, SHEET, setEdit, setMode, settle, useEdit, visibleBand } from "./editGestures";
+import { overlappingFrames } from "./framePush";
 import { type ArrowEnd, arrowBetween, boxAt, chipsSide, handlePoint, handlesFor, type Pt, scaleFor } from "./editModel";
 import { ResizeHandles } from "./ResizeHandles";
 import { useLandscape } from "./Immersive";
 import { installTouchTrace, touchTraceWanted } from "./touchTrace";
+import { nextUndoWord } from "./undoLabel";
 import "./edit.css";
 
 const UNDO_CHIP_MS = 8000;
@@ -91,6 +93,9 @@ export function MobileEdit({ editor, frameId, board, threadOpen = false }: { edi
   // edit (move, resize, delete, add, pen) leaves an Undo chip for UNDO_CHIP_MS; a held shape
   // always has one beside Delete and Done.
   const canUndo = useValue("mobile-edit-can-undo", () => editor.getCanUndo(), [editor]);
+  // What one tap takes back ("Undo push", then "Undo resize"): one visible step per tap.
+  const undoWhat = useValue("mobile-edit-undo-word", () => nextUndoWord(editor), [editor]);
+  const undoText = canUndo && undoWhat ? `Undo ${undoWhat}` : "Undo";
   const [editedAt, setEditedAt] = useState(0);
   useEffect(
     () =>
@@ -110,6 +115,12 @@ export function MobileEdit({ editor, frameId, board, threadOpen = false }: { edi
     const t = setTimeout(() => tick((n) => n + 1), UNDO_CHIP_MS - (Date.now() - editedAt) + 20);
     return () => clearTimeout(t);
   }, [recentEdit, editedAt]);
+  // While something is picked up, the floating Bunny button steps aside: on the board view it sits
+  // where the held shape's chips go.
+  useEffect(() => {
+    document.documentElement.classList.toggle("bm-holding", !!edit.held);
+    return () => document.documentElement.classList.remove("bm-holding");
+  }, [edit.held]);
   const live = useRef({ frameId, board });
   live.current = { frameId, board };
 
@@ -179,12 +190,28 @@ export function MobileEdit({ editor, frameId, board, threadOpen = false }: { edi
     const b = edit.held ? editor.getShapePageBounds(edit.held) : null;
     return b ? `${Math.round(b.w)} × ${Math.round(b.h)}` : "";
   }, [editor, edit.held]);
+  // A held frame: the neighbour frames it overlaps now, on screen (a faint outline each, and the
+  // "Push neighbours aside" chip while there are any).
+  const crowded = useValue(
+    "mobile-held-overlaps",
+    () => {
+      const b = edit.held && editor.getShape(edit.held)?.type === "frame" ? editor.getShapePageBounds(edit.held) : null;
+      if (!b || !edit.held) return [];
+      return overlappingFrames({ id: edit.held, x: b.x, y: b.y, w: b.w, h: b.h }, neighbourFrames(editor, edit.held)).map((o) => {
+        const tl = editor.pageToScreen({ x: o.x, y: o.y });
+        const br = editor.pageToScreen({ x: o.x + o.w, y: o.y + o.h });
+        return { id: o.id, left: tl.x, top: tl.y, width: br.x - tl.x, height: br.y - tl.y };
+      });
+    },
+    [editor, edit.held],
+  );
   const resizing = edit.mode === "resize";
   const from = edit.arrow?.from ?? null;
   const fromAt = useValue("mobile-arrow-from", () => (from ? editor.pageToScreen(from.point) : null), [editor, from]);
   // The picked-up shape on screen (without the lift's 6 px margin), for its resize handles.
   const shown = lift && edit.held && !edit.dragging ? { left: lift.left + 6, top: lift.top + 6, width: lift.width - 12, height: lift.height - 12 } : null;
   const heldType = edit.held ? editor.getShape(edit.held)?.type ?? "" : "";
+  const heldFrame = heldType === "frame";
   // Done / Delete above the bar, or under the top bar when a handle would sit on them.
   const vh = typeof window === "undefined" ? 844 : window.innerHeight;
   const band = visibleBand();
@@ -199,6 +226,9 @@ export function MobileEdit({ editor, frameId, board, threadOpen = false }: { edi
 
   return (
     <>
+      {crowded.map((r) => (
+        <div key={r.id} className="bm-push-outline" data-testid="mobile-push-outline" data-shape-id={r.id} style={{ left: r.left, top: r.top, width: r.width, height: r.height }} aria-hidden="true" />
+      ))}
       {lift ? <div className="bm-lift" data-testid="mobile-held" data-shape-id={edit.held} data-dragging={edit.dragging ? "1" : "0"} data-mode={edit.mode} style={lift} aria-hidden="true" /> : null}
       {shown && edit.held ? <ResizeHandles editor={editor} id={edit.held} rect={shown} /> : null}
       {fromAt ? <div className="bm-arrow-from" data-testid="mobile-arrow-from" style={{ left: fromAt.x, top: fromAt.y }} aria-hidden="true" /> : null}
@@ -210,14 +240,21 @@ export function MobileEdit({ editor, frameId, board, threadOpen = false }: { edi
               Resizing: drag to size · Done <b data-testid="mobile-resize-size">{size}</b>
             </span>
           ) : (
-            <span className="bm-edit-hint">Drag it · hold it again or tap Resize to resize · tap the canvas to drop</span>
+            <span className="bm-edit-hint">{heldFrame ? "Drag the frame · hold it again or tap Resize to resize · tap the canvas to drop" : "Drag it · hold it again or tap Resize to resize · tap the canvas to drop"}</span>
           )}
-          <button type="button" className="bm-edit-undo" data-testid="mobile-held-undo" disabled={!canUndo} onClick={() => editor.undo()} aria-label="Undo">
-            Undo
+          {crowded.length ? (
+            <button type="button" className="bm-edit-push" data-testid="mobile-push" onClick={() => edit.held && pushNeighbours(editor, edit.held)}>
+              Push neighbours aside
+            </button>
+          ) : null}
+          <button type="button" className="bm-edit-undo" data-testid="mobile-held-undo" data-undo={undoWhat ?? ""} disabled={!canUndo} onClick={() => editor.undo()} aria-label={undoText}>
+            {undoText}
           </button>
           <button type="button" className="bm-edit-resize" data-testid="mobile-resize" aria-pressed={resizing} onClick={() => setMode(resizing ? "move" : "resize")}>
             Resize
           </button>
+          {/* A whole frame (its agent, its cards) is not deleted from a chip. */}
+          {heldFrame ? null : (
           <button
             type="button"
             className="bm-edit-delete"
@@ -232,6 +269,7 @@ export function MobileEdit({ editor, frameId, board, threadOpen = false }: { edi
           >
             Delete
           </button>
+          )}
           {/* In Resize mode, Done ends the resize (back to Move); otherwise it drops the shape. */}
           <button type="button" className="bm-edit-done" data-testid="mobile-done" onClick={() => (getEdit().mode === "resize" ? setMode("move") : drop(editor))}>
             Done
@@ -239,8 +277,8 @@ export function MobileEdit({ editor, frameId, board, threadOpen = false }: { edi
         </div>
       ) : recentEdit && canUndo && !edit.arrow && tool !== "draw" ? (
         <div className="bm-edit-chips" data-mobile-ui data-testid="mobile-undo-chip" style={chips}>
-          <button type="button" className="bm-edit-undo" data-testid="mobile-chip-undo" onClick={() => editor.undo()}>
-            Undo
+          <button type="button" className="bm-edit-undo" data-testid="mobile-chip-undo" data-undo={undoWhat ?? ""} onClick={() => editor.undo()} aria-label={undoText}>
+            {undoText}
           </button>
         </div>
       ) : edit.arrow ? (

@@ -40,7 +40,7 @@ export class TranscriptShapeUtil extends BaseBoxShapeUtil<TranscriptShape> {
 
   override component(shape: TranscriptShape) {
     // Phone overview / off screen: a placeholder, no live agent stream (mobile/lod.tsx).
-    return phoneLod(shape, true, () => createElement(CardPlaceholder, { w: shape.props.w, h: shape.props.h, title: `Conversation · ${shape.props.agentId.slice(0, 8)}`, tone: "#ece7f8" }), () => createElement(HTMLContainer, { id: shape.id, style: { width: shape.props.w, height: shape.props.h } }, createElement(TranscriptRender, { shape })));
+    return phoneLod(shape, true, () => createElement(CardPlaceholder, { w: shape.props.w, h: shape.props.h, title: `Conversation · ${shape.props.agentId.slice(0, 8)}`, tone: "light-dark(#ece7f8, #393253)" }), () => createElement(HTMLContainer, { id: shape.id, style: { width: shape.props.w, height: shape.props.h } }, createElement(TranscriptRender, { shape })));
   }
 
   override getIndicatorPath(shape: TranscriptShape) {

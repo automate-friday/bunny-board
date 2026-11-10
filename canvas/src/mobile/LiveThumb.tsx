@@ -6,7 +6,8 @@
 // or takes over 4 s keeps the sketch: frames on another page, images from an old host).
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Editor, TLRecord, TLShape, TLShapeId } from "tldraw";
+import { useValue, type Editor, type TLRecord, type TLShape, type TLShapeId } from "tldraw";
+import { contentSignature } from "./thumbnailSignature";
 import { isFrameOnScreen, withFrameShown } from "./visibility";
 
 type Versions = { of: Map<string, number>; listeners: Set<() => void> };
@@ -71,22 +72,6 @@ const idle = () =>
     };
     check();
   });
-
-// What a frame looks like, as a short hash of its records (the frame and everything inside it).
-export function contentSignature(editor: Editor, id: string): string {
-  const parts: string[] = [];
-  const walk = (pid: string, depth: number) => {
-    const s = editor.getShape(pid as TLShapeId);
-    if (!s) return;
-    parts.push(JSON.stringify([s.id, s.type, Math.round(s.x), Math.round(s.y), s.rotation, s.props]));
-    if (depth < 4) for (const c of editor.getSortedChildIdsForParent(pid as TLShapeId)) walk(c, depth + 1);
-  };
-  walk(id, 0);
-  let h = 2166136261;
-  const str = parts.join("|");
-  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
-  return `${str.length}:${(h >>> 0).toString(36)}`;
-}
 
 // In memory: at most MEMORY_CAP images (least recently used go first, and are released), so
 // browsing a big board does not keep every thumbnail's bitmap alive (iOS Safari reloads a tab
@@ -207,7 +192,7 @@ function render(editor: Editor, id: string, w: number, h: number, wanted: () => 
     .then(async () => {
       if (!wanted()) return null;
       const cached = await stored(key, sig);
-      if (cached) {
+      if (cached && wanted() && contentSignature(editor, id) === sig) {
         const url = URL.createObjectURL(cached);
         remember(key, sig, url);
         return url;
@@ -220,7 +205,7 @@ function render(editor: Editor, id: string, w: number, h: number, wanted: () => 
       if (editor.getAncestorPageId(id as TLShapeId) !== editor.getCurrentPageId()) return null;
       const scale = Math.min(1, w / bounds.w, h / bounds.h);
       const shot = exportInParts(editor, id as TLShapeId, scale, wanted).then((blob) => {
-        if (!blob || blob.size <= 200) return null;
+        if (!blob || blob.size <= 200 || !wanted() || contentSignature(editor, id) !== sig) return null;
         const url = URL.createObjectURL(blob);
         remember(key, sig, url);
         void store(key, sig, blob);
@@ -261,12 +246,12 @@ function sketch(editor: Editor, frameId: string): { box: { x: number; y: number;
         const props = s.props as { color?: string; fill?: string };
         const color = COLORS[props.color ?? "black"] ?? "#555";
         const kind = s.type;
-        if (kind === "note") marks.push({ d, fill: NOTE_FILL[props.color ?? "yellow"] ?? "#fde9b6", stroke: "rgba(0,0,0,.08)", width: 2 });
-        else if (kind === "frame") marks.push({ d, fill: "rgba(255,255,255,.6)", stroke: "#c9c2b8", width: 2 });
-        else if (kind === "text") marks.push({ d, fill: "rgba(46,31,22,.18)", stroke: "none", width: 0 });
-        else if (kind === "image" || kind === "video" || kind === "bookmark" || kind === "embed") marks.push({ d, fill: "#e4ddd2", stroke: "#cfc6b8", width: 2 });
+        if (kind === "note") marks.push({ d, fill: NOTE_FILL[props.color ?? "yellow"] ?? "light-dark(#fde9b6, hsl(43 45% 21%))", stroke: "light-dark(rgba(0,0,0,.08), color-mix(in srgb, #edf0f7 55%, transparent))", width: 2 });
+        else if (kind === "frame") marks.push({ d, fill: "light-dark(rgba(255,255,255,.6), color-mix(in srgb, #20242c 60%, transparent))", stroke: "light-dark(#c9c2b8, var(--bunny-muted))", width: 2 });
+        else if (kind === "text") marks.push({ d, fill: "light-dark(rgba(46,31,22,.18), color-mix(in srgb, hsl(23 35% 21%) 18%, transparent))", stroke: "none", width: 0 });
+        else if (kind === "image" || kind === "video" || kind === "bookmark" || kind === "embed") marks.push({ d, fill: "light-dark(#e4ddd2, var(--bunny-raised))", stroke: "light-dark(#cfc6b8, var(--bunny-muted))", width: 2 });
         else if (!geo.isClosed) marks.push({ d, fill: "none", stroke: color, width: 4 });
-        else marks.push({ d, fill: props.fill && props.fill !== "none" ? `${color}33` : "#fff", stroke: kind === "geo" || kind === "arrow" ? color : "#d8d0c4", width: 3 });
+        else marks.push({ d, fill: props.fill && props.fill !== "none" ? `${color}33` : "light-dark(#fff, var(--bunny-surface))", stroke: kind === "geo" || kind === "arrow" ? color : "light-dark(#d8d0c4, var(--bunny-muted))", width: 3 });
       } catch {
         /* a shape without geometry: skipped */
       }
@@ -279,7 +264,9 @@ function sketch(editor: Editor, frameId: string): { box: { x: number; y: number;
 
 export function LiveThumb({ editor, id, w = 220, h = 140 }: { editor: Editor; id: string; w?: number; h?: number }) {
   const box = useRef<HTMLSpanElement>(null);
-  const [url, setUrl] = useState<string | null>(null);
+  const dark = useValue("thumbnail-theme", () => editor.user.getIsDarkMode(), [editor]);
+  const [image, setImage] = useState<{ url: string; dark: boolean } | null>(null);
+  const url = image?.dark === dark ? image.url : null;
   const [visible, setVisible] = useState(false);
   const [version, setVersion] = useState(() => versions(editor).of.get(id) ?? 0);
   useEffect(() => {
@@ -302,7 +289,7 @@ export function LiveThumb({ editor, id, w = 220, h = 140 }: { editor: Editor; id
   // brings the image back when the tile returns).
   useEffect(() => {
     if (visible || !url) return;
-    const t = setTimeout(() => setUrl(null), 3000);
+    const t = setTimeout(() => setImage(null), 3000);
     return () => clearTimeout(t);
   }, [visible, url]);
   useEffect(() => {
@@ -311,23 +298,23 @@ export function LiveThumb({ editor, id, w = 220, h = 140 }: { editor: Editor; id
     // Images are shared through the cache (memory), so a tile never revokes one.
     const t = setTimeout(() => {
       void render(editor, id, w, h, () => live).then((next) => {
-        if (live && next) setUrl(next);
+        if (live && next) setImage({ url: next, dark });
       });
     }, url ? 600 : 0);
     return () => {
       live = false;
       clearTimeout(t);
     };
-  }, [editor, id, visible, version, w, h]);
+  }, [editor, id, visible, version, w, h, dark]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is the redraw trigger.
-  const drawn = useMemo(() => (visible ? sketch(editor, id) : null), [editor, id, visible, version]);
+  const drawn = useMemo(() => (visible ? sketch(editor, id) : null), [editor, id, visible, version, dark]);
   return (
-    <span ref={box} className="bm-thumb" data-thumb={url ? "ready" : drawn ? "sketch" : "pending"} data-marks={drawn?.marks.length ?? 0} data-version={version} aria-hidden="true">
+    <span ref={box} className="bm-thumb" data-thumb={url ? "ready" : drawn ? "sketch" : "pending"} data-thumb-theme={dark ? "dark" : "light"} data-marks={drawn?.marks.length ?? 0} data-version={version} aria-hidden="true">
       {url ? (
         <img src={url} alt="" />
       ) : drawn ? (
         <svg viewBox={`${drawn.box.x} ${drawn.box.y} ${drawn.box.w} ${drawn.box.h}`} preserveAspectRatio="xMidYMid meet">
-          <rect x={drawn.box.x} y={drawn.box.y} width={drawn.box.w} height={drawn.box.h} fill="#fff" />
+          <rect x={drawn.box.x} y={drawn.box.y} width={drawn.box.w} height={drawn.box.h} fill="light-dark(#fff, var(--bunny-surface))" />
           {drawn.marks.map((m, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: a static drawing.
             <path key={i} d={m.d} fill={m.fill} stroke={m.stroke} strokeWidth={m.width} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />

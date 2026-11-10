@@ -16,6 +16,11 @@ export function markStopped(agentId: string, rows: number) {
   stopped.set(agentId, { at: Date.now(), rows });
   for (const l of listeners) l();
 }
+// Continue was sent after a stop: the "Stopped" note and its Continue button go away.
+export function clearStopped(agentId: string) {
+  if (!stopped.delete(agentId)) return;
+  for (const l of listeners) l();
+}
 export function useStopped(agentId: string | undefined, rows: number): boolean {
   const s = useSyncExternalStore((l) => (listeners.add(l), () => listeners.delete(l)), () => (agentId ? stopped.get(agentId) : undefined));
   return !!s && rows <= s.rows + 1;
@@ -60,7 +65,7 @@ export function StopButton({ agentId, host, rows, size = 44, onError }: { agentI
         else void stop();
       }}
       onPointerDown={(e) => e.stopPropagation()}
-      style={{ flex: "none", width: size, height: size, borderRadius: size >= 40 ? 12 : 8, border: "none", background: reason ? "#cbd5e1" : stopping ? "#7f1d1d" : "#0f172a", color: "#fff", cursor: reason ? "not-allowed" : "pointer", display: "grid", placeItems: "center", padding: 0, opacity: stopping ? 0.7 : 1 }}
+      style={{ flex: "none", width: size, height: size, borderRadius: size >= 40 ? 12 : 8, border: "none", background: reason ? "light-dark(#cbd5e1, hsl(213 27% 21%))" : stopping ? "#7f1d1d" : "#0f172a", color: "#fff", cursor: reason ? "not-allowed" : "pointer", display: "grid", placeItems: "center", padding: 0, opacity: stopping ? 0.7 : 1 }}
     >
       <span aria-hidden="true" style={{ width: Math.round(size * 0.32), height: Math.round(size * 0.32), borderRadius: 3, background: "currentColor" }} />
     </button>

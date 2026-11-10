@@ -109,7 +109,7 @@ function Badge({
       <span className={`tl-label${running ? " tl-shimmer" : ""}`} style={labelStyle}>{label}</span>
       {summary ? <span className="tl-summary">{summary}</span> : <span style={{ flex: 1 }} />}
       {meta ? <span className="tl-meta">{meta}</span> : null}
-      {canOpen ? <Glyph name="chevron" size={12} style={{ color: "#94a3b8", transform: open ? "rotate(90deg)" : undefined, transition: "transform .12s ease" }} /> : null}
+      {canOpen ? <Glyph name="chevron" size={12} style={{ color: "light-dark(#94a3b8, var(--bunny-muted))", transform: open ? "rotate(90deg)" : undefined, transition: "transform .12s ease" }} /> : null}
     </button>
   );
 }
@@ -138,14 +138,14 @@ function ToolCallView({ row, item, ctx }: { row: TranscriptRow; item: Transcript
         summary={p.summary}
         running={running}
         meta={elapsed ?? (canceled ? "canceled" : failed ? "failed" : null)}
-        labelStyle={canceled ? { color: "#94a3b8", textDecoration: "line-through" } : failed ? { color: "#b91c1c" } : undefined}
+        labelStyle={canceled ? { color: "light-dark(#94a3b8, var(--bunny-muted))", textDecoration: "line-through" } : failed ? { color: "light-dark(#b91c1c, hsl(0 74% 74%))" } : undefined}
         open={open}
         canOpen={p.canOpenDetails || !!p.errorText}
         onToggle={() => setOpen((o) => !o)}
         testId="tool-call-badge"
       />
       {failed && p.errorText && !open ? (
-        <div style={{ margin: "0 0 0 20px", color: "#b91c1c", fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={p.errorText}>
+        <div style={{ margin: "0 0 0 20px", color: "light-dark(#b91c1c, hsl(0 74% 74%))", fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={p.errorText}>
           {p.errorText.split("\n")[0]}
         </div>
       ) : null}
@@ -202,7 +202,7 @@ function TruncatedNotice({ row, item, ctx, onLoaded, onText }: { row: Transcript
           </button>
         ) : null}
       </span>
-      {error ? <span role="alert" style={{ color: "#b91c1c", fontSize: 11 }}>{error}</span> : null}
+      {error ? <span role="alert" style={{ color: "light-dark(#b91c1c, hsl(0 74% 74%))", fontSize: 11 }}>{error}</span> : null}
       {text !== null ? <pre className="tl-pre">{text}</pre> : null}
     </div>
   );
@@ -233,7 +233,7 @@ function Pre({ text, style }: { text: string | undefined; style?: React.CSSPrope
   return text ? <pre className="tl-pre" style={style}>{text}</pre> : null;
 }
 
-const link = { color: "#2f80ed", overflowWrap: "anywhere" } as const;
+const link = { color: "light-dark(#2f80ed, hsl(214 84% 74%))", overflowWrap: "anywhere" } as const;
 
 // The body for one detail type (Paseo tool-call-details.tsx buildDetailSections).
 function DetailBody({ detail }: { detail: ToolCallDetail }) {
@@ -242,12 +242,12 @@ function DetailBody({ detail }: { detail: ToolCallDetail }) {
       return (
         <Section>
           <pre className="tl-pre" data-testid="detail-shell">
-            <span style={{ color: "#94a3b8" }}>$ </span>
+            <span style={{ color: "light-dark(#94a3b8, var(--bunny-muted))" }}>$ </span>
             {detail.command}
             {detail.output ? `\n\n${detail.output}` : ""}
           </pre>
           {typeof detail.exitCode === "number" ? (
-            <span className="tl-chip" style={detail.exitCode !== 0 ? { background: "#fef2f2", color: "#b91c1c" } : undefined}>
+            <span className="tl-chip" style={detail.exitCode !== 0 ? { background: "light-dark(#fef2f2, var(--bunny-surface))", color: "light-dark(#b91c1c, hsl(0 74% 74%))" } : undefined}>
               exit {detail.exitCode}
             </span>
           ) : null}
@@ -285,7 +285,7 @@ function DetailBody({ detail }: { detail: ToolCallDetail }) {
             {detail.url}
           </a>
           {detail.code !== undefined ? <span className="tl-chip">{detail.code} {detail.codeText ?? ""}</span> : null}
-          {detail.prompt ? <div style={{ fontSize: 12, color: "#64748b" }}>{detail.prompt}</div> : null}
+          {detail.prompt ? <div style={{ fontSize: 12, color: "light-dark(#64748b, var(--bunny-muted))" }}>{detail.prompt}</div> : null}
           <Pre text={detail.result} />
         </Section>
       );
@@ -304,8 +304,8 @@ function DetailBody({ detail }: { detail: ToolCallDetail }) {
             <div data-testid="detail-sub-agent-actions" style={{ display: "flex", flexDirection: "column", gap: 1, fontSize: 12 }}>
               {actions.map((a) => (
                 <div key={`${a.index}:${a.toolName}`} style={{ display: "flex", gap: 6, minWidth: 0 }}>
-                  <span style={{ color: "#334155", fontWeight: 550, flex: "none" }}>{formatSubAgentToolName(a.toolName)}</span>
-                  {a.summary ? <span style={{ color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "ui-monospace, monospace", fontSize: 11 }}>{a.summary}</span> : null}
+                  <span style={{ color: "light-dark(#334155, hsl(215 50% 74%))", fontWeight: 550, flex: "none" }}>{formatSubAgentToolName(a.toolName)}</span>
+                  {a.summary ? <span style={{ color: "light-dark(#64748b, var(--bunny-muted))", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "ui-monospace, monospace", fontSize: 11 }}>{a.summary}</span> : null}
                 </div>
               ))}
             </div>
@@ -341,7 +341,7 @@ export function ToolDetailView({ detail, errorText }: { detail: ToolCallDetail |
   return (
     <>
       {detail ? <DetailBody detail={detail} /> : null}
-      {errorText ? <Section title="Error"><Pre text={errorText} style={{ background: "#fef2f2", color: "#991b1b" }} /></Section> : null}
+      {errorText ? <Section title="Error"><Pre text={errorText} style={{ background: "light-dark(#fef2f2, var(--bunny-surface))", color: "light-dark(#991b1b, hsl(0 70% 74%))" }} /></Section> : null}
     </>
   );
 }
@@ -377,7 +377,7 @@ export function ToolGroupView<R extends TranscriptRow>({ unit, renderRow }: { un
     <div data-testid="tool-call-group" style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
       <Badge icon="wrench" label={label} meta={failed ? `${failed} failed` : `${unit.hidden.length} calls`} open={open} canOpen onToggle={() => setOpen((o) => !o)} running={unit.group.isLoading} testId="tool-call-group-badge" />
       {open ? (
-        <div data-testid="tool-call-group-calls" style={{ display: "flex", flexDirection: "column", gap: 2, margin: "0 0 0 14px", paddingLeft: 6, borderLeft: "2px solid #f1f5f9" }}>
+        <div data-testid="tool-call-group-calls" style={{ display: "flex", flexDirection: "column", gap: 2, margin: "0 0 0 14px", paddingLeft: 6, borderLeft: "2px solid light-dark(#f1f5f9, var(--bunny-line))" }}>
           {unit.hidden.map((r) => (
             <div key={r.item?.key ?? r.id ?? r.at}>{renderRow(r)}</div>
           ))}
@@ -443,7 +443,7 @@ function ReasoningView({ item, compact }: { item: TranscriptItem; compact?: bool
     <div data-testid="reasoning" style={{ minWidth: 0 }}>
       <Badge icon="brain" label="Thinking" summary={open ? undefined : first.slice(0, 160)} open={open} canOpen={!!text.trim()} onToggle={() => setOpen((o) => !o)} />
       {open ? (
-        <div className="tl-details" style={{ color: "#64748b", fontSize: compact ? 11.5 : 12.5 }}>
+        <div className="tl-details" style={{ color: "light-dark(#64748b, var(--bunny-muted))", fontSize: compact ? 11.5 : 12.5 }}>
           <MessageBody text={text} compact={compact} />
         </div>
       ) : null}
@@ -466,7 +466,7 @@ function TodoCard({ item, compact }: { item: TranscriptItem; compact?: boolean }
             return (
               // biome-ignore lint/suspicious/noArrayIndexKey: todo entries have no id.
               <div key={i} className="tl-todo-row" data-status={status}>
-                <span aria-hidden style={{ flex: "none", width: 14, textAlign: "center", color: status === "completed" ? "#16a34a" : status === "in_progress" ? "#2f80ed" : "#94a3b8" }}>
+                <span aria-hidden style={{ flex: "none", width: 14, textAlign: "center", color: status === "completed" ? "light-dark(#16a34a, hsl(142 76% 74%))" : status === "in_progress" ? "light-dark(#2f80ed, hsl(214 84% 74%))" : "light-dark(#94a3b8, var(--bunny-muted))" }}>
                   {status === "completed" ? "☑" : status === "in_progress" ? "◐" : "☐"}
                 </span>
                 <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{status === "in_progress" && t.activeForm ? t.activeForm : t.text}</span>
@@ -485,7 +485,7 @@ function CompactionDivider({ item }: { item: TranscriptItem }) {
   return (
     <div className="tl-divider" data-testid="compaction" role="separator">
       <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-        {loading ? <Spinner size={10} color="#94a3b8" /> : <Glyph name="scissors" size={12} />}
+        {loading ? <Spinner size={10} color="light-dark(#94a3b8, var(--bunny-muted))" /> : <Glyph name="scissors" size={12} />}
         {label}
       </span>
     </div>
@@ -493,9 +493,9 @@ function CompactionDivider({ item }: { item: TranscriptItem }) {
 }
 
 const LEVEL: Record<string, { color: string; icon: GlyphName }> = {
-  info: { color: "#475569", icon: "info" },
-  warning: { color: "#b45309", icon: "alert" },
-  error: { color: "#b91c1c", icon: "x" },
+  info: { color: "light-dark(#475569, var(--bunny-muted))", icon: "info" },
+  warning: { color: "light-dark(#b45309, hsl(26 88% 74%))", icon: "alert" },
+  error: { color: "light-dark(#b91c1c, hsl(0 74% 74%))", icon: "x" },
 };
 
 function NoticeView({ item, fallback }: { item: TranscriptItem; fallback: string }) {
