@@ -4,7 +4,7 @@ import path from 'node:path';
 import type {RemoteAgents} from './remote';
 import type {RemoteStartIntent} from './remote-start';
 
-export interface FleetStartInput {provider:string;title:string;prompt:string;modeId?:string;labels?:Record<string,string>}
+export interface FleetStartInput {provider:string;title:string;prompt:string;modeId?:string;thinkingOptionId?:string;labels?:Record<string,string>}
 export interface StartHost {host:string;state:string;enabled:boolean;reason?:string;paseoServerId?:string}
 // The companion owns paired sessions and a durable receipt for each board operation.
 // Creation returns before the opener: the board must save its binding before send.

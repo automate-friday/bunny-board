@@ -21,9 +21,33 @@ export function selectionWantsNativeCopy(sel: SelectionLike | null | undefined):
   return inRegion(sel.anchorNode) && inRegion(sel.focusNode);
 }
 
+/** A link copies as its label only; write "label (url)" into the plain text so a pasted
+ * selection keeps the address. Rich (HTML) paste keeps the anchors. True when it set data. */
+export function copyWithLinkUrls(sel: Selection, data: DataTransfer, doc: Document): boolean {
+  const holder = doc.createElement("div");
+  for (let r = 0; r < sel.rangeCount; r++) holder.append(sel.getRangeAt(r).cloneContents());
+  let text = sel.toString(), from = 0, changed = false;
+  for (const a of holder.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+    const label = a.textContent ?? "", href = a.getAttribute("href") ?? "";
+    if (!label.trim() || label === href || label === href.replace(/^mailto:/, "")) continue;
+    const at = text.indexOf(label, from);
+    if (at < 0) continue;
+    const swap = `${label} (${href})`;
+    text = text.slice(0, at) + swap + text.slice(at + label.length); from = at + swap.length; changed = true;
+  }
+  if (!changed) return false;
+  data.setData("text/plain", text);
+  data.setData("text/html", holder.innerHTML);
+  return true;
+}
+
 export function installNativeCopy(win: Window = window): () => void {
   const onClip = (e: Event) => {
-    if (selectionWantsNativeCopy(win.getSelection())) e.stopImmediatePropagation();
+    const sel = win.getSelection();
+    if (!selectionWantsNativeCopy(sel)) return;
+    e.stopImmediatePropagation();
+    const data = (e as ClipboardEvent).clipboardData;
+    if (e.type === "copy" && sel && data && copyWithLinkUrls(sel, data, win.document)) e.preventDefault();
   };
   // Capture on the window runs before tldraw's document listeners.
   win.addEventListener("copy", onClip, true);

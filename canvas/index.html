@@ -7,6 +7,38 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <!-- Home-screen app: opens full screen at "/" (the canvas then reopens the last board). -->
+    <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Bunny" />
+    <!-- Launch fast path: start reading the board's saved copy (src/boardCache.ts) before the app's
+         code has loaded and run. Picks the board as src/places.ts restoreLastPlace will. -->
+    <script>
+      (function () {
+        try {
+          var q = new URLSearchParams(location.search), board = q.get("board") || "main", force = q.get("boardcache");
+          var home = navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
+          if (force === "0" || !window.indexedDB || (force !== "1" && !home && !matchMedia("(pointer: coarse)").matches)) return;
+          if (home && location.pathname === "/" && !q.get("frame") && !q.get("comment") && !sessionStorage.getItem("bunny-launched")) {
+            var last = JSON.parse(localStorage.getItem("bunny-places") || "[]")[0];
+            if (last && typeof last.board === "string" && last.board) board = last.board;
+          }
+          var open = indexedDB.open("bunny-board-cache", 1);
+          open.onupgradeneeded = function () { open.result.createObjectStore("boards", { keyPath: "boardId" }); };
+          window.__bunnyEarlyBoard = { board: board, read: new Promise(function (done) {
+            open.onerror = function () { done(null); };
+            open.onsuccess = function () {
+              try {
+                var get = open.result.transaction("boards", "readonly").objectStore("boards").get(board);
+                get.onsuccess = function () { done(get.result || null); };
+                get.onerror = function () { done(null); };
+              } catch (e) { done(null); }
+            };
+          }) };
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

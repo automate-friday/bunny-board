@@ -19,7 +19,7 @@ export async function placePhotos(editor: Editor, boardId: string, frameId: stri
     const assetId = AssetRecordType.createId();
     editor.run(() => {
       editor.createAssets([{ id: assetId, typeName: "asset", type: "image", props: { name: file.name, src: uploaded.src, w: uploaded.w, h: uploaded.h, mimeType: file.type, isAnimated: file.type === "image/gif" }, meta: {} }]);
-      editor.createShape({ id: createShapeId(), type: "image", parentId: target.id, x: 20, y: Math.max(20, Math.min(bottom + 20, target.props.h - h - 20)), props: { assetId, w, h, altText: file.name }, meta: { screenshotSource: { name: file.name, time: "" } } });
+      editor.createShape({ id: createShapeId(), type: "image", parentId: target.id, x: 20, y: Math.max(20, Math.min(bottom + 20, target.props.h - h - 20)), props: { assetId, w, h, altText: file.name } });
     });
     placed++;
   }

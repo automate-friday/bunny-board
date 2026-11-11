@@ -7,3 +7,6 @@
 .bm-board-page { font-size: 14px !important; font-weight: 600; color: light-dark(rgba(46,31,22,.7), color-mix(in srgb, #edf0f7 70%, transparent)) !important; }
 .bm-board { max-width: calc(100vw - 140px); }
 .bm-boards .bm-pages button.bm-page-new { color: var(--bm-violet); font-weight: 650; }
+/* Recent frames on other boards (places.ts), at the top of the board menu. */
+.bm-recent { display: flex; flex-direction: column; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid light-dark(rgba(46,31,22,.12), var(--bunny-line)); }
+.bm-recent > small { padding: 4px 12px 2px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; font-size: 11px !important; }

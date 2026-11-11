@@ -19,15 +19,18 @@ import { ArchiveCtx } from "./FrameArchive";
 import { Emoji } from "./Emoji";
 import { BunnyMark } from "./BunnyMark";
 import { ModelPicker } from "./ModelPicker";
-import { addPin, clearOfHeading, removePin, type ScreenRect, usePanelDock, usePinJump, usePins } from "./framePanelDock";
+import { clearOfHeading, type ScreenRect, usePanelDock } from "./framePanelDock";
+import { PIN_LIMIT, usePins } from "./pins";
 import { Dot } from "./Dot";
 import { B, BUNNY_CONTROLS_CSS, DOT, chip, fieldLabel, iconBtn, menuItem, primaryBtn, softBtn, surface } from "./bunnyTheme";
-import { FALLBACK_PROVIDERS, fallbackCatalogue, initialChoice, type StartCatalogue } from "../../shared/start-catalogue";
+import { FALLBACK_PROVIDERS, effortFor, fallbackCatalogue, rememberedChoice, type StartCatalogue, withCustomModels } from "../../shared/start-catalogue";
+import { addCustomModel, customModels, lastStartChoice, rememberStartChoice } from "./startChoice";
 import { CLOUD_PROVIDERS, CLOUD_PROVIDER_LABEL, frameCloudProvider, type CloudProvider } from "../../shared/cloud-provider";
 import { infoNow } from "./info";
 import { MobileCtx } from "./mobile/mobileMode";
 import { askStartSheet } from "./mobile/StartSheet";
-import { QuickStarts } from "./QuickStarts";
+import { GhostUse, QuickStarts, useQuickStartData } from "./QuickStarts";
+import { useGhostIdea, useIdle } from "./ghostIdea";
 import { recordOpeningPrompt, takePendingPrompt } from "./quickStartPrompts";
 
 const panelBase: React.CSSProperties = {
@@ -48,7 +51,7 @@ const panelBase: React.CSSProperties = {
   zIndex: 300,
 };
 
-// Docked pill and docked panel sit in the bottom dock row (PinDock's DockRow, next to the
+// Docked pill and docked panel sit in the bottom dock row (DockRow.tsx, next to the
 // organizer's Bunny launcher), so they are laid out in flow there, not positioned here.
 const pillStyle: React.CSSProperties = {
   ...surface,
@@ -78,9 +81,9 @@ export const startRequested = new Set<string>();
 
 // Toolbar shown when exactly one frame is selected: one compact row (status, name, the main
 // action for unbound frames, pin, ⋯ for everything else). Unpinned frames float near the top
-// or dock bottom-right (minimizable to a pill); a pinned frame's panel is its own pin pill
-// expanded in place in the bottom dock (`pinned`), and – collapses it back to that pill.
-export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCollapse }: { frame: TLFrameShape; boardId: string; onOpen: () => void; pinned?: boolean; onCollapse?: () => void }) {
+// or dock bottom-right (minimizable to a pill). The pin button pins the frame in the frame
+// tabs (FrameTabs.tsx, pins.ts).
+export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; boardId: string; onOpen: () => void }) {
   const editor = useEditor();
   const live = useValue("frame", () => editor.getShape(frame.id) as TLFrameShape | undefined, [editor, frame.id]);
   // biome-ignore lint/suspicious/noExplicitAny: meta JSON.
@@ -94,9 +97,8 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
   const narrow = useNarrow();
   const paused = useValue("frame-panel-paused", () => boardLocks(editor).get().agentsPaused, [editor]);
   const [dock, setDock] = usePanelDock();
-  const docked = inPin || dock !== "float";
-  const [pins, setPins] = usePins(boardId);
-  const [jump, setJump] = usePinJump();
+  const docked = dock !== "float";
+  const [pins, togglePin] = usePins(editor, boardId);
   // Floating near the frame (phones: full width under the header), or docked bottom-right.
   const panel: React.CSSProperties = docked ? (narrow ? dockedPanelNarrow : dockedPanel) : narrow ? { ...panelBase, left: 8, right: 8, top: 58, transform: "none", maxWidth: "none", maxHeight:"calc(100dvh - 74px)", overflowY:"auto" } : panelBase;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -114,24 +116,21 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
     const r = el.getBoundingClientRect();
     setShift((cur) => clearOfHeading({ left: r.left, right: r.right, top: r.top - cur, bottom: r.bottom - cur }, heading));
   }, [headingKey]);
-  // A pin pill clicked by keyboard or mouse unmounts as this panel replaces it; keep focus in
-  // the dock (here) instead of losing it to the page. A canvas selection keeps canvas focus.
-  useEffect(() => {
-    if (inPin && (!document.activeElement || document.activeElement === document.body)) root.current?.focus();
-  }, [inPin]);
   // Keys pressed in the panel are the panel's, never canvas shortcuts (Backspace on a focused
-  // button must not delete the frame). Esc collapses a pinned frame's panel; elsewhere it still
-  // reaches the canvas, which deselects as before. Native listener on the panel: tldraw
-  // listens on its container, which React's own handlers only see afterwards.
-  const collapseRef = useRef(onCollapse);
-  collapseRef.current = onCollapse;
+  // button must not delete the frame). Esc still reaches the canvas, which deselects as
+  // before. Native listener on the panel: tldraw listens on its container, which React's own
+  // handlers only see afterwards.
   useEffect(() => {
     const panelEl = root.current;
     if (!panelEl) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !inPin) return;
+      if (e.key === "Escape") return;
       e.stopPropagation();
-      if (e.key === "Escape") collapseRef.current?.();
+      // Tab in the empty opening message takes the ghost idea (React never sees this key).
+      if (e.key === "Tab" && !e.shiftKey && ghost.idea && !line && (e.target as HTMLElement | null)?.dataset?.testid === "opening-line") {
+        e.preventDefault();
+        setLine(ghost.idea);
+      }
     };
     panelEl.addEventListener("keydown", onKey);
     return () => panelEl.removeEventListener("keydown", onKey);
@@ -155,9 +154,18 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
   const [archiveOld, setArchiveOld] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const restartBusy = useRef(false);
+  const [forking, setForking] = useState(false);
   const [catalogue, setCatalogue] = useState<StartCatalogue | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
+  // Reasoning effort (Paseo thinkingOptionId); null is the model's default.
+  const [effort, setEffort] = useState<string | null>(null);
+  // Model ids typed into the picker, remembered on this device.
+  const [custom, setCustom] = useState(customModels);
   const [line, setLine] = useState("");
+  // Starter cards and, after a quiet 10 s, ghost ideas typed into the empty message box.
+  const untouched = mode === "start" && !mobile && !line.trim();
+  const quick = useQuickStartData({ editor, frameId: frame.id, idle: useIdle(untouched) });
+  const ghost = useGhostIdea(quick.ideas, untouched);
   // A starter chosen on the empty-board hint opens this frame's start form with it filled.
   // (The phone's start sheet takes the starter itself.)
   useEffect(() => {
@@ -225,7 +233,13 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
         .then((c) => {
           if (gone) return;
           setCatalogue(c);
-          setProvider((p) => p ?? initialChoice(c));
+          // The model and effort last started from this device, when still offered.
+          setProvider((p) => {
+            if (p) return p;
+            const r = rememberedChoice(withCustomModels(c, customModels()), lastStartChoice());
+            setEffort(r.effort);
+            return r.provider;
+          });
         });
     const t = setTimeout(load, catalogue ? 5000 : 0);
     return () => {
@@ -257,6 +271,7 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
   }, [menuOpen]);
 
   if (!live) return null;
+  const shownCatalogue = catalogue ? withCustomModels(catalogue, custom) : null;
   const by = window.__board?.userName ?? "User";
   const name = live.props.name || "Frame";
 
@@ -285,7 +300,8 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
   const needsLook = !!paseo.pendingDeltas || (bound && paused) || !!err;
 
   const pinned = pins.includes(live.id);
-  if (dock === "pill" && !inPin) {
+  const pinsFull = !pinned && pins.length >= PIN_LIMIT;
+  if (dock === "pill") {
     return (
       <button
         type="button"
@@ -317,10 +333,11 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
         className="bfp-icon"
         data-testid="frame-pin"
         aria-pressed={pinned}
-        title={pinned ? "Unpin this frame" : "Pin this frame for quick switching"}
+        title={pinned ? "Unpin this frame" : pinsFull ? `Pins are full (${PIN_LIMIT}): unpin one first` : "Pin this frame to the frame tabs (on every device)"}
         aria-label={pinned ? `Unpin ${name}` : `Pin ${name}`}
-        style={{ ...iconBtn, background: pinned ? B.lavenderSoft : "transparent", color: pinned ? B.violetDeep : B.muted }}
-        onClick={() => setPins(pinned ? removePin(pins, live.id) : addPin(pins, live.id))}
+        disabled={pinsFull}
+        style={{ ...iconBtn, background: pinned ? B.lavenderSoft : "transparent", color: pinned ? B.violetDeep : B.muted, opacity: pinsFull ? 0.4 : 1 }}
+        onClick={() => togglePin(live.id)}
       >
         <PinIcon filled={pinned} />
       </button>
@@ -336,15 +353,9 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
       >
         ⋯{needsLook ? <span aria-hidden style={{ position: "absolute", top: 4, right: 4, width: 7, height: 7, borderRadius: 4, background: B.orange }} /> : null}
       </button>
-      {inPin ? (
-        <button type="button" className="bfp-icon" data-testid="pin-collapse" title="Collapse to its pin" aria-label={`Collapse ${name} to its pin`} style={iconBtn} onClick={() => { closeMenu(); onCollapse?.(); }}>
-          –
-        </button>
-      ) : (
-        <button type="button" className="bfp-icon" data-testid="frame-panel-minimize" title={docked ? "Collapse to the pill" : "Minimize to the corner"} aria-label="Minimize frame panel" style={iconBtn} onClick={() => { closeMenu(); setDock("pill"); }}>
-          –
-        </button>
-      )}
+      <button type="button" className="bfp-icon" data-testid="frame-panel-minimize" title={docked ? "Collapse to the pill" : "Minimize to the corner"} aria-label="Minimize frame panel" style={iconBtn} onClick={() => { closeMenu(); setDock("pill"); }}>
+        –
+      </button>
     </div>
   );
 
@@ -372,12 +383,8 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
       <div role="menu" data-testid="frame-menu" className="bfp-pop" style={narrow ? { ...(docked ? menuUp : menuBase), left: 0, right: 0, width: "auto" } : docked ? menuUp : menuBase}>
         {chips}
         {items}
-        {divider}
-        <label className="bfp-item" title="When on, clicking a pinned frame also moves the camera to it. Off keeps the view still (good for recording)." style={{ ...menuItem, cursor: "pointer" }}>
-          <input type="checkbox" role="menuitemcheckbox" aria-checked={jump} data-testid="pin-jump-toggle" checked={jump} onChange={(e) => setJump(e.target.checked)} />
-          Jump to frame when switching
-        </label>
-        {docked && !inPin ? (
+        {docked ? divider : null}
+        {docked ? (
           <button type="button" className="bfp-item" data-testid="frame-panel-float" style={menuItem} onClick={() => { closeMenu(); setDock("float"); }}>
             ↖ Float near frame
           </button>
@@ -388,11 +395,10 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
     <div
       ref={root}
       className="bunny-fp"
-      style={inPin ? { ...panel, maxWidth: "100%", border: `1px solid ${B.violet}`, outline: "none" } : shift ? { ...panel, top: `calc(${typeof panel.top === "number" ? `${panel.top}px` : panel.top} + ${shift}px)` } : panel}
+      style={shift ? { ...panel, top: `calc(${typeof panel.top === "number" ? `${panel.top}px` : panel.top} + ${shift}px)` } : panel}
       data-testid="frame-panel"
-      data-dock={inPin ? "pin" : dock}
+      data-dock={dock}
       data-frame-id={live.id}
-      tabIndex={inPin ? -1 : undefined}
       onPointerDown={(e) => e.stopPropagation()}
     >
       <style>{BUNNY_CONTROLS_CSS}</style>
@@ -424,6 +430,21 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
         setRestarting(false);
       }
     };
+    // A new sibling frame and agent that start from this conversation (server/frame-fork.ts).
+    const fork = async () => {
+      if (forking || paseo.host) return;
+      setForking(true);
+      setErr(null);
+      try {
+        await api<{ frameId: string }>(`/api/ui/boards/${encodeURIComponent(boardId)}/frames/${encodeURIComponent(live.id)}/fork`, { method: "POST", body: "{}" });
+        setMenuOpen(false);
+        ui.toast("Forked into a new frame beside this one; its agent starts from this conversation.");
+      } catch (e) {
+        setErr((e as Error).message);
+      } finally {
+        setForking(false);
+      }
+    };
     const busy = paseo.status === "running" || paseo.status === "needs-permission";
     return shell(
       <>
@@ -447,6 +468,11 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
             {divider}
             {sharedItems}
             {divider}
+            {!paseo.host ? (
+              <button type="button" className="bfp-item" style={menuItem} data-testid="fork-frame" disabled={forking} onClick={() => void fork()} title="Start a new agent in a new frame beside this one, from this conversation so far; this frame keeps going">
+                {forking ? "Forking…" : "Fork to new frame"}
+              </button>
+            ) : null}
             {linked && !paseo.host && capabilities.can("restartWithTools") && mode !== "restart" ? (
               <button
                 type="button"
@@ -548,19 +574,40 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
         <div data-testid="start-form" style={{ display: "flex", flexDirection: "column", gap: 12, padding: "12px 6px 2px 0", borderTop: `1px solid ${B.line}`, width: narrow ? "auto" : 440, maxWidth: "100%", boxSizing: "border-box" }}>
           <div data-testid="start-model-row" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0 }}>
             <span style={{ ...fieldLabel, width: 84, flex: "none" }}>Model</span>
-            <ModelPicker catalogue={catalogue} value={provider} onChange={setProvider} up={docked} />
+            <ModelPicker
+              catalogue={shownCatalogue}
+              value={provider}
+              effort={effort}
+              up={docked}
+              onChange={(v) => {
+                const e = effortFor(shownCatalogue, v, effort);
+                setProvider(v);
+                setEffort(e);
+                rememberStartChoice({ provider: v, effort: e });
+              }}
+              onEffort={(e) => {
+                setEffort(e);
+                rememberStartChoice({ provider, effort: e });
+              }}
+              onCustom={(v) => {
+                setCustom(addCustomModel(v));
+                setProvider(v);
+                rememberStartChoice({ provider: v, effort });
+              }}
+            />
           </div>
           <textarea
             data-testid="opening-line"
             style={{ width: "100%", display: "block", margin: 0 }}
             rows={3}
             aria-label="Opening message"
-            placeholder="Opening message (optional)"
+            placeholder={ghost.text || "Opening message (optional)"}
             value={line}
             onChange={(e) => setLine(e.target.value)}
             onKeyDown={(e) => e.stopPropagation()}
           />
-          {line.trim() ? null : <QuickStarts onPick={(s) => setLine(s.prompt)} />}
+          {ghost.idea ? <GhostUse onUse={() => ghost.idea && setLine(ghost.idea)} /> : null}
+          {line.trim() ? null : <QuickStarts data={quick} onPick={(s) => setLine(s.prompt)} />}
           <div data-testid="start-options-row" style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
             {/* One machine at a time, so a segmented choice (as in Paseo's new-agent form), not checkboxes. */}
             <div data-testid="start-runs-on-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, minWidth: 0 }}>
@@ -607,7 +654,7 @@ export function FramePanel({ frame, boardId, onOpen, pinned: inPin = false, onCo
             <button type="button" style={softBtn} onClick={() => setMode("idle")}>
               Cancel
             </button>
-            <button type="button" className="bfp-primary" style={primaryBtn} data-testid="start-go" disabled={!provider || (!!startHost && (!startHosts.some(h=>h.host===startHost && h.enabled)))} onClick={() => { if (!provider) return; recordOpeningPrompt(line); writeRequest({ kind: "create", provider, prompt: line || undefined, ...runsOnRequest(ephemeral ? false : cloud, cloudProvider, startHost) }); }}>
+            <button type="button" className="bfp-primary" style={primaryBtn} data-testid="start-go" disabled={!provider || (!!startHost && (!startHosts.some(h=>h.host===startHost && h.enabled)))} onClick={() => { if (!provider) return; recordOpeningPrompt(line); rememberStartChoice({ provider, effort }); writeRequest({ kind: "create", provider, ...(effort ? { thinkingOptionId: effort } : {}), prompt: line || undefined, ...runsOnRequest(ephemeral ? false : cloud, cloudProvider, startHost) }); }}>
               Start
             </button>
           </div>

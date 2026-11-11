@@ -1,18 +1,30 @@
 import { TLDRAW_LICENSE_KEY } from "./tldraw-license";
+import { BoardStylePanel } from "./BoardStylePanel";
 import { readSetting } from "../../shared/bunny-storage";
 import { FrameCompression } from "./FrameCompression";
 import { Comments, CommentToolIcon } from "./comments/Comments";
 import { COMMENT_TOOL, CommentTool, installCommentAnchorKeeper, setShowPins, showPins } from "./comments/state";
 import { EmptyBoardHint } from "./EmptyBoardHint";
 import { moveFramesToPage, newPage, showMoved } from "./moveFrames";
-import { ImageTools } from "./ImageTools";
 import { installTextBoundsMeasurements } from "./measuredTextBounds";
 import { useSync } from "@tldraw/sync";
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCachedSync } from "./cachedSync";
+import { boardCacheEnabled } from "./boardCache";
+import { markLaunch } from "./launchTiming";
+import { MenuPanelWithNewAgent } from "./NewAgentButton";
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   DefaultContextMenu,
-  DefaultContextMenuContent,
+  ArrangeMenuSubmenu,
+  ClipboardMenuGroup,
+  ConversionsMenuGroup,
+  CursorChatItem,
+  EditMenuSubmenu,
+  MoveToPageMenu,
+  ReorderMenuSubmenu,
+  SelectAllMenuItem,
+  useShowCollaborationUi,
   defaultHandleExternalUrlContent,
   DefaultToolbar,
   SelectToolbarItem,
@@ -59,6 +71,7 @@ import {
   TldrawUiMenuItem,
   TldrawUiMenuSubmenu,
   useToasts,
+  react,
   TldrawUiMenuToolItem,
   useEditor,
   useValue,
@@ -83,20 +96,22 @@ import { BoardControls, PausedBadges, useNarrow } from "./BoardControls";
 import { BoardHeader } from "./BoardHeader";
 import { initDeviceLock, installLayoutGuard } from "./locks";
 import { FramePanel } from "./FramePanel";
-import { pickPanel, usePanelDock, usePins } from "./framePanelDock";
-import { DockRow, PinDock } from "./PinDock";
+import { usePanelDock } from "./framePanelDock";
+import { DockRow } from "./DockRow";
+import { noteViewed } from "./jumpPaletteModel";
+import { PIN_LIMIT, usePins } from "./pins";
 import { FrameHistoryView, HistoryCtx } from "./FrameHistory";
 import { archiveTargets } from "./archiveTarget";
+import { api } from "./api";
 import { ArchiveCtx, ArchivePanel, type ArchiveTab, archiveFrames, ProposalBanner, restoreArchived } from "./FrameArchive";
 import { OrganizerPopover } from "./OrganizerPopover";
 import { ImportPicker, type ImportResponse, type PickerTarget } from "./ImportPicker";
 import { Sidebar } from "./Sidebar";
-import { NeedsYou } from "./NeedsYou";
 import { SidebarToggle } from "./SidebarToggle";
 import { readSidebar, writeSidebar } from "./sidebarMemory";
 import { BoardUiCtx } from "./ui";
 import { JumpPalette } from "./JumpPalette";
-import { Portals } from "./portals/Portals";
+import { framePeek, Portals } from "./portals/Portals";
 import { PORTAL_TOOL, PortalTool, PortalToolIcon } from "./portals/PortalTool";
 import { installEditKeyBuffer } from "./editKeyBuffer";
 import { installFrameRenameFocus } from "./frameRename";
@@ -109,9 +124,13 @@ import { MOBILE_TLDRAW } from "./mobile/mobileMode";
 import { PhoneCanvas } from "./mobile/PhoneCanvas";
 import { capPhonePixelRatio } from "./mobile/lod";
 import { VARIANT_WIDTHS, variantUrl, variantWidth } from "../../shared/image-variants";
-import { phoneView, setPhoneView } from "./mobile/visibility";
+import { phoneOpenFrame, phoneView, setPhoneView } from "./mobile/visibility";
+import { rememberPlace, setFrameInUrl } from "./places";
 import { PhoneFrameShapeUtil, PhoneGeoShapeUtil, PhoneNoteShapeUtil, PhoneTextShapeUtil, phoneGeometryOn, setPhoneGeometry } from "./mobile/phoneGeometry";
 import { keepCollaborativeSyncRate } from "./syncRate";
+
+// Desktop only: loaded on its own, so phones never download or run it.
+const FrameTabs = lazy(() => import("./FrameTabs").then((m) => ({ default: m.FrameTabs })));
 
 declare global {
   interface Window {
@@ -119,6 +138,10 @@ declare global {
     __board?: { boardId: string; userId: string; userName: string };
   }
 }
+
+// Phones and the home-screen app draw a saved copy of the board at once and fetch only what
+// changed (cachedSync.ts); desktop tabs sync as before. Fixed for the page's life.
+const useBoardSync: (o: { uri: string; assets: TLAssetStore; shapeUtils: typeof shapeUtils; boardId: string }) => ReturnType<typeof useSync> = boardCacheEnabled() ? useCachedSync : ({ uri, assets, shapeUtils }) => useSync({ uri, assets, shapeUtils });
 
 function params() {
   const q = new URLSearchParams(window.location.search);
@@ -283,6 +306,24 @@ function ArchiveFrameItem() {
   return <TldrawUiMenuItem id="paseo-archive-frames" label={frames.length === 1 ? `Archive frame${name ? ` “${name.length > 28 ? `${name.slice(0, 27)}…` : name}”` : ""}` : `Archive ${frames.length} frames`} onSelect={() => archive.archive(frames)} />;
 }
 
+// "Fork conversation to new frame": one bound frame under the pointer (frame-fork.ts on the server).
+function ForkFrameItem() {
+  const editor = useEditor();
+  const { addToast } = useToasts();
+  const [frame] = useState(() => {
+    const ids = archiveTargets(editor, editor.inputs.getCurrentPagePoint());
+    const f = ids.length === 1 ? editor.getShape(ids[0]) : undefined;
+    const p = (f?.meta as { paseo?: { agentId?: string; request?: unknown; host?: string } } | undefined)?.paseo;
+    return f && p?.agentId && !p.request && !p.host ? f.id : null;
+  });
+  if (!frame) return null;
+  const fork = () =>
+    api(`/api/ui/boards/${encodeURIComponent(params().boardId)}/frames/${encodeURIComponent(frame)}/fork`, { method: "POST", body: "{}" })
+      .then(() => addToast({ title: "Forked into a new frame beside this one" }))
+      .catch((e: Error) => addToast({ title: `Fork failed: ${e.message}`, severity: "warning" }));
+  return <TldrawUiMenuItem id="bunny-fork-frame" label="Fork conversation to new frame" onSelect={() => void fork()} />;
+}
+
 // "Move to page": the same frame(s) Archive acts on, to another page or a new one. Stays on
 // this page (a toast offers the jump), so a page can be sorted out frame after frame.
 function MoveFramesToPageItem() {
@@ -312,6 +353,32 @@ function MoveFramesToPageItem() {
   );
 }
 
+// tldraw's default context menu, without its own "Move to page" when the menu is about frames:
+// "Move frame to page" above (MoveFramesToPageItem) does that, staying on this page and finding
+// the frames room. Other shapes (a loose sticky) keep tldraw's.
+function BoardContextMenuContent() {
+  const editor = useEditor();
+  const showCollaborationUi = useShowCollaborationUi();
+  const [frames] = useState(() => archiveTargets(editor, editor.inputs.getCurrentPagePoint()).length > 0);
+  const multiPage = useValue("bunny-multi-page", () => editor.options.maxPages > 1, [editor]);
+  return (
+    <>
+      {showCollaborationUi ? <CursorChatItem /> : null}
+      <TldrawUiMenuGroup id="modify">
+        <EditMenuSubmenu />
+        <ArrangeMenuSubmenu />
+        <ReorderMenuSubmenu />
+        {multiPage && !frames ? <MoveToPageMenu /> : null}
+      </TldrawUiMenuGroup>
+      <ClipboardMenuGroup />
+      <ConversionsMenuGroup />
+      <TldrawUiMenuGroup id="select-all">
+        <SelectAllMenuItem />
+      </TldrawUiMenuGroup>
+    </>
+  );
+}
+
 function BoardContextMenu(props: TLUiContextMenuProps) {
   const ui = useContext(BoardUiCtx);
   return (
@@ -319,13 +386,47 @@ function BoardContextMenu(props: TLUiContextMenuProps) {
       <TldrawUiMenuGroup id="bunny">
         <CapturePoint />
         <PortalMenuItems />
+        <ForkFrameItem />
         <MoveFramesToPageItem />
         <ArchiveFrameItem />
         <TldrawUiMenuItem id="paseo-import-here" label="Import conversations here" onSelect={() => ui.openPicker({ kind: "grid", at: ui.contextPoint() })} />
       </TldrawUiMenuGroup>
-      <DefaultContextMenuContent />
+      <BoardContextMenuContent />
     </DefaultContextMenu>
   );
+}
+
+// Pin / Unpin in a frame peek's title chip (Portals.tsx).
+function PeekPin({ editor, boardId, frameId }: { editor: Editor; boardId: string; frameId: string }) {
+  const [pins, toggle] = usePins(editor, boardId);
+  const pinned = pins.includes(frameId);
+  const full = !pinned && pins.length >= PIN_LIMIT;
+  return (
+    <button type="button" data-testid="peek-pin" aria-pressed={pinned} disabled={full} title={pinned ? "Unpin this frame" : full ? `Pins are full (${PIN_LIMIT}): unpin one first` : "Pin this frame (on every device)"} onClick={() => toggle(frameId)}>
+      {pinned ? "Unpin" : "Pin"}
+    </button>
+  );
+}
+
+// Whether a frame peek shows its conversation pane (the Chat button in its title chip).
+const PEEK_CHAT_KEY = "bunny-peek-chat";
+function usePeekChat(): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(() => {
+    try {
+      return localStorage.getItem(PEEK_CHAT_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const set = useCallback((next: boolean) => {
+    setOn(next);
+    try {
+      localStorage.setItem(PEEK_CHAT_KEY, next ? "1" : "0");
+    } catch {
+      /* the choice lasts until reload */
+    }
+  }, []);
+  return [on, set];
 }
 
 function Overlay({ boardId, focusFrame }: { boardId: string; focusFrame: string | null }) {
@@ -345,15 +446,38 @@ function Overlay({ boardId, focusFrame }: { boardId: string; focusFrame: string 
   const [dock] = usePanelDock();
   const history = useContext(HistoryCtx);
   const bound = useValue("bound-of-selection", () => (selected ? conversationFrameOf(editor, selected) : null), [editor, selected]);
-  // One panel per frame (pickPanel): a pinned frame's pill expands in place when it, or a
-  // shape inside it, is selected; otherwise the floating/docked panel for a selected frame.
-  const [pins] = usePins(boardId);
-  const [collapsedPin, setCollapsedPin] = useState<string | null>(null);
-  const panelPick = pickPanel(selected ? { id: selected.id, type: selected.type } : null, bound?.id ?? null, pins);
-  const selectedFrame = panelPick.kind === "panel" ? (selected as TLFrameShape) : null;
-  const pinnedOwner = panelPick.kind === "pin" ? panelPick.id : null;
-  // Each new selection of a pinned frame opens its panel again.
-  useEffect(() => setCollapsedPin(null), [pinnedOwner]);
+  // A selected frame gets its frame panel (floating near it, or docked bottom-right).
+  const selectedFrame = selected?.type === "frame" ? (selected as TLFrameShape) : null;
+  // A frame peek: Pin and (for a frame with an agent) Chat in its title chip, and the
+  // agent's conversation in a pane beside the frame, to reply without going there.
+  const [peekChat, setPeekChat] = usePeekChat();
+  const peekId = useValue(framePeek);
+  const peekBound = useValue(
+    "peek-bound",
+    () => {
+      // biome-ignore lint/suspicious/noExplicitAny: meta JSON.
+      const p = peekId ? (editor.getShape(peekId as TLShapeId)?.meta as any)?.paseo : null;
+      return !!(p?.agentId || p?.request);
+    },
+    [editor, peekId],
+  );
+  const peekExtra = useCallback(
+    (id: string) => (
+      <>
+        <PeekPin editor={editor} boardId={boardId} frameId={id} />
+        {peekBound ? (
+          <button type="button" data-testid="peek-chat" aria-pressed={peekChat} title={peekChat ? "Hide the conversation" : "Show the conversation, to reply here"} onClick={() => setPeekChat(!peekChat)}>
+            Chat
+          </button>
+        ) : null}
+      </>
+    ),
+    [editor, boardId, peekBound, peekChat, setPeekChat],
+  );
+  const peekSide = useCallback(
+    (id: string) => (peekChat && peekBound ? <Sidebar key={id} embedded editor={editor} frameId={id} boardId={boardId} onClose={() => setPeekChat(false)} /> : null),
+    [editor, boardId, peekBound, peekChat, setPeekChat],
+  );
 
   // The nearest frame owns the selection, including an unbound nested frame.
   // Never leave its ancestor conversation in the sidebar.
@@ -389,29 +513,18 @@ function Overlay({ boardId, focusFrame }: { boardId: string; focusFrame: string 
       <FrameCompression editor={editor} boardId={boardId} />
       <Channels editor={editor} boardId={boardId} />
       <ReviewRegions editor={editor} />
-      <Portals editor={editor} toast={ui.toast} rift={portalRift} />
+      <Portals editor={editor} toast={ui.toast} rift={portalRift} peekExtra={peekExtra} peekSide={peekSide} />
       <ProposalBanner editor={editor} />
       <EmptyBoardHint editor={editor} />
-      {selected?.type === "image" ? <ImageTools key={selected.id} image={selected} /> : null}
       {mobile ? (
         // Phone shell: the thread sheet is the bound frame's panel; empty frames keep theirs.
         selectedFrame && !threadable ? <FramePanel frame={selectedFrame} boardId={boardId} onOpen={() => sidebar.open(selectedFrame.id)} /> : null
       ) : (
       <>
       {selectedFrame && dock === "float" ? <FramePanel frame={selectedFrame} boardId={boardId} onOpen={() => sidebar.open(selectedFrame.id)} /> : null}
-      {/* Bottom dock: the docked panel (or its pill) for the selected frame, plus pinned frames.
-          With no frame selected the dock shows only the pinned pills (owner's call: no empty-state clutter). */}
-      <DockRow>
-        {dock === "float" || !selectedFrame ? null : <FramePanel frame={selectedFrame} boardId={boardId} onOpen={() => sidebar.open(selectedFrame.id)} />}
-        <PinDock
-          boardId={boardId}
-          current={pinnedOwner}
-          expanded={pinnedOwner && collapsedPin !== pinnedOwner ? pinnedOwner : null}
-          onExpand={() => setCollapsedPin(null)}
-          onCollapse={() => setCollapsedPin(pinnedOwner)}
-          openFrame={(id) => sidebar.open(id)}
-        />
-      </DockRow>
+      {/* Bottom dock: the docked panel (or its pill) for the selected frame. Pinned frames
+          live in the frame tabs (FrameTabs.tsx). */}
+      <DockRow>{dock === "float" || !selectedFrame ? null : <FramePanel frame={selectedFrame} boardId={boardId} onOpen={() => sidebar.open(selectedFrame.id)} />}</DockRow>
       </>
       )}
       {history.frameId ? <FrameHistoryView key={history.frameId} editor={editor} boardId={boardId} frameId={history.frameId} shapeUtils={shapeUtils} /> : null}
@@ -424,7 +537,7 @@ export function App() {
   const { userId, userName } = useMemo(identity, []);
   // `components` lets the server refuse canvases older than its board components.
   const uri = `${window.location.origin.replace(/^http/, "ws")}/api/connect/${encodeURIComponent(boardId)}?userId=${encodeURIComponent(userId)}&userName=${encodeURIComponent(userName)}&components=${COMPONENTS_VERSION}`;
-  const store = useSync({ uri, assets, shapeUtils });
+  const store = useBoardSync({ uri, assets, shapeUtils, boardId });
   const [picker, setPicker] = useState<PickerTarget | null>(null);
   const [toast, setToast] = useState<{ text: string; action?: { label: string; run(): void } } | null>(null);
   const toastText = toast?.text ?? null;
@@ -438,7 +551,8 @@ export function App() {
       SharePanel: () => <BoardHeader boardId={boardId} onImport={() => setPicker({ kind: "grid", at: null })} />,
       ContextMenu: BoardContextMenu,
       Toolbar: BoardToolbar,
-      ...(mobile ? { Canvas: PhoneCanvas } : {}),
+      StylePanel: BoardStylePanel,
+      ...(mobile ? { Canvas: PhoneCanvas } : { MenuPanel: MenuPanelWithNewAgent }),
     }),
     [boardId, frameId, mobile],
   );
@@ -518,6 +632,10 @@ export function App() {
   // which conversation); SidebarToggle reopens the last conversation with one click.
   const [remembered] = useState(() => readSidebar(browserStorage(), boardId));
   const [sidebarFrame, setSidebarFrame] = useState<string | null>(frameId ?? (!mobile && remembered.open ? remembered.frame : null));
+  // Opening a frame's conversation counts as looking at it (the frame tabs' Recent).
+  useEffect(() => {
+    if (sidebarFrame) noteViewed(boardId, userId, sidebarFrame);
+  }, [boardId, userId, sidebarFrame]);
   const [reading, setReading] = useState(remembered.reading === true);
   const [lastSidebarFrame, setLastSidebarFrame] = useState<string | null>(frameId ?? remembered.frame);
   useEffect(() => {
@@ -580,8 +698,29 @@ export function App() {
     const t = setTimeout(() => setShellEditor(editor), 0);
     return () => clearTimeout(t);
   }, [editor]);
+  // Remember this board and the frame open on it (places.ts: the home-screen app reopens it,
+  // the phone shell offers a jump back to it from another board). On the phone the open frame
+  // also goes in the URL, so an iOS reload after the app was evicted comes back to it.
+  useEffect(() => {
+    if (!editor) return;
+    const name = (id: string | null) => (id ? (editor.getShape(id as TLShapeId) as TLFrameShape | undefined)?.props.name : undefined);
+    if (!mobile) {
+      rememberPlace(boardId, frameId, name(frameId));
+      return;
+    }
+    // This board's frame from now on (set here, not while rendering: the App being replaced
+    // for a board switch still watches it until its effects are cleaned up).
+    phoneOpenFrame.set(frameId);
+    return react("remember-place", () => {
+      const id = phoneOpenFrame.get();
+      if (id && !editor.getShape(id as TLShapeId)) return;
+      rememberPlace(boardId, id, name(id));
+      setFrameInUrl(id);
+    });
+  }, [editor, boardId, frameId, mobile]);
   const onMount = useCallback(
     (editor: Editor) => {
+      markLaunch("bunny:editor");
       setEditor(editor);
       editorRef.current = editor;
       window.__editor = editor;
@@ -704,7 +843,7 @@ export function App() {
       <HostRecoveryBanner boardId={boardId} editor={editor} />
       {editor ? <JumpPalette editor={editor} boardId={boardId} userId={userId} onFindConversations={() => setPicker({ kind: "grid", at: null })} /> : null}
       <div style={{ flex: 1, minHeight: 0, display: "flex", position: "relative" }}>
-      {editor && !mobile && !phone ? <NeedsYou key={boardId} editor={editor} boardId={boardId} open={setSidebarFrame} onReturn={() => setSidebarFrame(null)} /> : null}
+      {editor && !mobile && !phone ? <Suspense fallback={null}><FrameTabs key={boardId} editor={editor} boardId={boardId} userId={userId} /></Suspense> : null}
       <SidebarCtx.Provider value={sidebarApi}>
         <BoardUiCtx.Provider value={boardUi}>
         <HistoryCtx.Provider value={historyApi}>

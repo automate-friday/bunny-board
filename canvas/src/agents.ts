@@ -4,6 +4,7 @@
 // origin, so a stream per card would hang the page at six cards.
 
 import { perfCount } from "./perf";
+import { pageFrames } from "./pageFrames";
 import { checkingRemoteSnapshot, staleRemoteStatus } from "../../shared/remote-status";
 import { startingView } from "../../shared/start-pending";
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -354,8 +355,7 @@ export function boundFrameIndex(editor: Editor): Computed<Map<string, BoundFrame
       perfCount("bound-frame-index");
       const old = isUninitialized(prev) ? undefined : prev;
       const out = new Map<string, BoundFrame>();
-      for (const s of editor.getCurrentPageShapes()) {
-        if (s.type !== "frame") continue;
+      for (const s of pageFrames(editor).get()) {
         // biome-ignore lint/suspicious/noExplicitAny: meta JSON.
         const p = (s.meta as any)?.paseo;
         if (!p?.agentId) continue;

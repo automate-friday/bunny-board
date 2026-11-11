@@ -8,12 +8,13 @@ import { B, softBtn, surface } from "./bunnyTheme";
 import { pageFrames } from "./pageFrames";
 import { MobileCtx } from "./mobile/mobileMode";
 import { askStartSheet } from "./mobile/StartSheet";
-import { QuickStarts } from "./QuickStarts";
+import { QuickStarts, useQuickStartData } from "./QuickStarts";
 import { setPendingPrompt, type Starter } from "./quickStartPrompts";
 
 export function EmptyBoardHint({ editor }: { editor: Editor }) {
   const mobile = useContext(MobileCtx);
   const empty = useValue("empty-board", () => (perfCount("empty-board"), pageFrames(editor).get().length === 0), [editor]);
+  const quick = useQuickStartData({});
   const drawing = useValue("frame-tool", () => editor.getCurrentToolId() === "frame", [editor]);
   if (!empty) return null;
   const startWith = (s: Starter) => {
@@ -29,19 +30,21 @@ export function EmptyBoardHint({ editor }: { editor: Editor }) {
   return (
     <div
       data-testid="empty-board-hint"
-      style={{ ...surface, position: "absolute", top: 64, left: "50%", transform: "translateX(-50%)", zIndex: 300, pointerEvents: "auto", padding: 16, width: 460, maxWidth: "calc(100vw - 32px)", boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 14 }}
+      style={{ position: "absolute", top: 64, bottom: "calc(88px + env(safe-area-inset-bottom, 0px))", left: 16, right: 16, zIndex: 300, pointerEvents: "none", display: "flex", alignItems: "center", justifyContent: "center" }}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <div>
-        <strong style={{ display: "block", fontSize: 15, lineHeight: "20px" }}>What should an agent do?</strong>
-        <span style={{ fontSize: 12, color: B.muted }}>Pick a starter: it draws a frame and fills in the prompt, which you can edit before it runs.</span>
-      </div>
-      <QuickStarts onPick={startWith} heading="Suggested" layout={mobile ? "row" : "grid"} />
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, paddingTop: 2 }}>
-        <span style={{ fontSize: 12, color: B.muted }}>Or draw your own frame (F) and choose <b style={{ fontWeight: 600 }}>Start conversation</b>.</span>
-        <button type="button" data-testid="empty-board-draw-frame" style={{ ...softBtn, flex: "none" }} onClick={() => editor.setCurrentTool("frame")} disabled={drawing}>
-          {drawing ? "Now drag on the board" : "Draw a frame"}
-        </button>
+      <div style={{ ...surface, pointerEvents: "auto", padding: 16, width: 460, maxWidth: "100%", maxHeight: "100%", overflowY: "auto", boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <strong style={{ display: "block", fontSize: 15, lineHeight: "20px" }}>What should an agent do?</strong>
+          <span style={{ fontSize: 12, color: B.muted }}>Pick a starter: it draws a frame and fills in the prompt, which you can edit before it runs.</span>
+        </div>
+        <QuickStarts data={quick} onPick={startWith} heading="Suggested" layout={mobile ? "compact" : "grid"} />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, paddingTop: 2 }}>
+          <span style={{ fontSize: 12, color: B.muted }}>Or draw your own frame (F) and choose <b style={{ fontWeight: 600 }}>Start conversation</b>.</span>
+          <button type="button" data-testid="empty-board-draw-frame" style={{ ...softBtn, flex: "none" }} onClick={() => editor.setCurrentTool("frame")} disabled={drawing}>
+            {drawing ? "Now drag on the board" : "Draw a frame"}
+          </button>
+        </div>
       </div>
     </div>
   );

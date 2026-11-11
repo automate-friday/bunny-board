@@ -1,6 +1,8 @@
 import {WorkerSettingsLive,workerSettingsRuntime} from '../tools/upstash/settings.mjs';
 import {upstashDefault} from '../shared/conversation-links';
 import { startFrame } from "./frame-start";
+import { forkFrame } from "./frame-fork";
+import { QuickStartsAi } from "./quick-starts-ai";
 import type { BoardSnapshots } from "./board-snapshots";
 import { imageVariant } from "./image-variants";
 import { resolvePaseoServerId } from "./paseo-identity";
@@ -8,6 +10,7 @@ import { subtree as compressionContents } from "./frame-archive";
 import { compressionPrompt } from "./frame-compression";
 import {SnapshotStream} from './snapshot-stream';
 import {hostMetrics} from './host-metrics';
+import { readDeployStatus } from "./deploy-status";
 import type { PromptOutbox } from "./prompt-outbox";
 import { daemonFailureReason, hostOperation } from "./daemon-health";
 import os from "node:os";
@@ -51,8 +54,10 @@ import type { CloudSessions } from "./cloud-sessions";
 import { COMPONENTS_VERSION } from "../shared/components/transcript";
 import { perfSnapshot } from "./perf";
 import { CLIENT_PERF, ClientPerfStore, clientPerfRoute, readCappedText } from "./client-perf";
+import { CLIENT_LAUNCH, ClientLaunchStore, launchLogLine, sanitizeLaunch } from "./client-launch";
 import { appendTouchLines, readTouchLines, sanitizeTouchBatch, TOUCH_DEBUG } from "./touch-debug";
-import { FALLBACK_PROVIDERS, fallbackCatalogue, startCatalogue } from "../shared/start-catalogue";
+import { FALLBACK_PROVIDERS, fallbackCatalogue, startCatalogue, withBaseModels, withLiveModels } from "../shared/start-catalogue";
+import { ClaudeCliModels } from "./cli-models";
 import { simplifyItem } from "./timeline";
 import type { VideoWorkflow } from "./video-workflow";
 import type { TranscriptHub } from "./transcripts";
@@ -83,6 +88,7 @@ const MIME: Record<string, string> = {
   ".woff": "font/woff",
   ".ttf": "font/ttf",
   ".map": "application/json",
+  ".webmanifest": "application/manifest+json",
 };
 
 const FILE_MIME: Record<string, string> = {
@@ -111,6 +117,10 @@ const FILE_MIME: Record<string, string> = {
 };
 
 const SETTERS = new Set(["/model", "/mode", "/thinking", "/feature"]);
+
+const quickStartsAi = new QuickStartsAi();
+// Claude models the installed CLI reports, merged into Paseo's list (server/cli-models.ts).
+const claudeCliModels = new ClaudeCliModels();
 
 function send(res: ServerResponse, status: number, body: unknown): void {
   const text = typeof body === "string" ? body : JSON.stringify(body);
@@ -351,6 +361,7 @@ export function startHttp(opts: {
   }
 
   const clientPerf = new ClientPerfStore();
+  const clientLaunches = new ClientLaunchStore();
 
   async function handleUi(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
     const p = url.pathname;
@@ -371,6 +382,24 @@ export function startHttp(opts: {
         res.writeHead(204, { "cache-control": "no-store" });
         res.end();
       } else if (r) send(res, r.status, r.body);
+      return true;
+    }
+    // Launch timings (canvas/src/launchTiming.ts): one POST per page load, logged; the last 100
+    // kept for GET …/launches (server/client-launch.ts).
+    if (p === "/api/ui/debug/launch" && req.method === "POST") {
+      const raw = await readCappedText(req, CLIENT_LAUNCH.maxBodyBytes).catch(() => null);
+      let body: unknown = null;
+      try { body = raw ? JSON.parse(raw) : null; } catch { /* not JSON */ }
+      const launch = sanitizeLaunch(body, String(req.headers["user-agent"] ?? ""), new Date());
+      if (!launch) { send(res, 400, { error: "no launch steps" }); return true; }
+      clientLaunches.add(launch);
+      log(launchLogLine(launch));
+      res.writeHead(204, { "cache-control": "no-store" });
+      res.end();
+      return true;
+    }
+    if (p === "/api/ui/debug/launches" && req.method === "GET") {
+      send(res, 200, { launches: clientLaunches.list(Number(url.searchParams.get("limit")) || undefined) });
       return true;
     }
     // Errors the phone shell caught (canvas/src/mobile/ShellErrorBoundary.tsx): logged, and the
@@ -531,6 +560,10 @@ export function startHttp(opts: {
       }catch(error){send(res,400,{error:(error as Error).message});}
       return true;
     }
+    if (p === "/api/ui/deploy-status") {
+      send(res, 200, readDeployStatus(path.join(cfg.stateDir, "deploy-status.json")));
+      return true;
+    }
     if (p === "/api/ui/info") {
       send(res, 200, {
         workerSettings: !!process.env.BUNNY_UPSTASH_SETTINGS,
@@ -564,8 +597,12 @@ export function startHttp(opts: {
       return true;
     }
     if (p === "/api/ui/start-options") {
-      const entries = await providerEntries(cfg.defaultCwd).catch(() => null);
-      const workerEntries = upstashDefault(cfg) ? entries?.filter((e: any) => /^upstash-(codex|claude)$/.test(e.provider)) : entries;
+      // Paseo's catalogue (its daemon's providers: Codex asks its CLI, Claude ships a list,
+      // plus models from Claude settings.json and Paseo's additionalModels), with any Claude
+      // model the installed CLI reports that Paseo does not list yet.
+      const [paseoEntries, liveClaude] = await Promise.all([providerEntries(cfg.defaultCwd).catch(() => null), process.env.BUNNY_LIVE_MODELS === "0" ? null : claudeCliModels.models()]);
+      const entries = paseoEntries ? withLiveModels(paseoEntries, "claude", liveClaude) : null;
+      const workerEntries = upstashDefault(cfg) ? withBaseModels(entries).filter((e: any) => /^upstash-(codex|claude)$/.test(e.provider)) : entries;
       const catalogue = workerEntries ? startCatalogue(workerEntries, cfg.defaultProvider) : null;
       if (catalogue && upstashDefault(cfg)) for (const harness of catalogue.harnesses) harness.label = harness.label.replace(/^Upstash /, "");
       send(res, 200, catalogue?.harnesses.length ? catalogue : fallbackCatalogue(cfg.defaultProvider, entries ? "Paseo reported no harnesses" : "Paseo's model list is not available right now"));
@@ -843,6 +880,14 @@ export function startHttp(opts: {
       send(res, 200, out);
       return true;
     }
+    // Fork a frame's conversation into a new sibling frame with a new agent (frame-fork.ts).
+    m = p.match(/^\/api\/ui\/boards\/([^/]+)\/frames\/([^/]+)\/fork$/);
+    if (m && req.method === "POST") {
+      const boardId = decodeURIComponent(m[1]);
+      if (!host.exists(boardId)) return send(res, 404, { error: `no board ${boardId}` }), true;
+      send(res, 202, await forkFrame(host.get(boardId), watcher, bridge, decodeURIComponent(m[2])));
+      return true;
+    }
     m = p.match(/^\/api\/ui\/boards\/([^/]+)\/outline$/);
     if (m) {
       if (!host.exists(m[1])) return send(res, 404, { error: `no board ${m[1]}` }), true;
@@ -864,6 +909,17 @@ export function startHttp(opts: {
     if (p === "/api/ui/start-hosts" && req.method === "GET") {
       try { send(res,200,{...(remote?.enabled ? remote.startHostsSnapshot(url.searchParams.get("fresh")==="1") : {hosts:[],refreshing:false}),...(!remote?.enabled?{note:"Remote hosts disabled here (no remote connection configured for this board)."}:{})}); }
       catch(error){send(res,503,{error:(error as Error).message});}
+      return true;
+    }
+    // Opt-in "Smarter with AI" starter cards: one small-model call per user per 4 hours.
+    if (p === "/api/ui/quick-starts/suggest" && req.method === "POST") {
+      const body = await readBody(req);
+      try {
+        const r = await quickStartsAi.suggest(String(body.by ?? ""), body.prompts, body.context);
+        send(res, "retryAfterMs" in r ? 429 : 200, r);
+      } catch (error) {
+        send(res, 503, { error: (error as Error).message });
+      }
       return true;
     }
     if (p === "/api/ui/recheck-start" && req.method === "POST") {

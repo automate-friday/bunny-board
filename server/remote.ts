@@ -305,7 +305,7 @@ export class RemoteAgents {
     });
   }
 
-  async createOnHost(intent:RemoteStartIntent,input:{provider:string;title:string;prompt:string;modeId?:string;labels?:Record<string,string>},persist:(intent:RemoteStartIntent)=>void,createOnly=false){
+  async createOnHost(intent:RemoteStartIntent,input:{provider:string;title:string;prompt:string;modeId?:string;thinkingOptionId?:string;labels?:Record<string,string>},persist:(intent:RemoteStartIntent)=>void,createOnly=false){
     if(!this.enabled)throw Error('Remote connections disabled in this board environment');
     if(hasRemoteRuntimeFiles()){
       // Wire seed is identity only; never forward the board's persisted phase/payload.

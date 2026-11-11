@@ -3,13 +3,11 @@ import { readSetting, legacyStorageKey } from "../../shared/bunny-storage";
 // selections and reloads:
 // - where the panel lives: floating near the frame, or docked bottom-right as a pill or
 //   expanded in place ("1" is the pill, the value the plain minimize flag always used);
-// - pinned frames, per board, for quick switching;
-// - whether switching to a pinned frame also moves the camera (on by default; "0" means the
-//   viewer turned it off).
+// - pinned frames this browser kept before pins moved into the board (pins.ts reads them
+//   once and moves them in).
 import { useCallback, useEffect, useState } from "react";
 
 export const PANEL_MINIMIZED_KEY = "bunny-frame-panel-minimized";
-export const PIN_JUMP_KEY = "bunny-pin-jump";
 export const pinsKey = (boardId: string) => `bunny-pins:${boardId}`;
 const EVENT = "bunny-frame-panel-dock";
 
@@ -52,48 +50,6 @@ export function readPins(storage: Store | undefined, boardId: string): string[] 
 export function writePins(storage: Store | undefined, boardId: string, pins: string[]): void {
   put(storage, pinsKey(boardId), pins.length ? JSON.stringify(pins) : null);
 }
-export const addPin = (pins: string[], id: string): string[] => (pins.includes(id) ? pins : [...pins, id]);
-export const removePin = (pins: string[], id: string): string[] => pins.filter((p) => p !== id);
-// Pins whose frame still exists; a deleted frame's pin disappears.
-export const livePins = (pins: string[], isFrame: (id: string) => boolean): string[] => pins.filter(isFrame);
-
-export const readPinJump = (storage: Store | undefined): boolean => get(storage, PIN_JUMP_KEY) !== "0";
-export const writePinJump = (storage: Store | undefined, on: boolean): void => put(storage, PIN_JUMP_KEY, on ? "1" : "0");
-
-// The editor calls a pin switch makes (a subset of tldraw's Editor, so tests can fake it).
-export type SwitchEditor = {
-  getShape(id: string): { id: string; type: string } | undefined;
-  getAncestorPageId(shape: { id: string }): string | undefined;
-  getCurrentPageId(): string;
-  setCurrentPage(id: string): unknown;
-  select(id: string): unknown;
-  zoomToSelection(opts?: unknown): unknown;
-};
-
-// Switch to a pinned frame: select it and open its conversation; move the camera only when
-// `jump` is on. (A frame on another page needs that page shown before it can be selected.)
-export function switchToPin(editor: SwitchEditor, id: string, jump: boolean, open: (id: string) => void): boolean {
-  const shape = editor.getShape(id);
-  if (shape?.type !== "frame") return false;
-  const page = editor.getAncestorPageId(shape);
-  if (page && page !== editor.getCurrentPageId()) editor.setCurrentPage(page);
-  editor.select(id);
-  if (jump) editor.zoomToSelection({ animation: { duration: 300 } });
-  open(id);
-  return true;
-}
-
-// Which frame panel the selection gets (Overlay). `owner` is the nearest frame holding the
-// selection (the frame itself, or the frame a selected shape sits in).
-// - "pin": the owner is pinned, so its pill expands in place: no other panel or pill for it.
-// - "panel": an unpinned frame is selected itself: the floating/docked panel.
-// - "none": nothing, a multi-selection, or a loose shape (or one inside an unpinned frame).
-export type PanelPick = { kind: "pin"; id: string } | { kind: "panel"; id: string } | { kind: "none" };
-export function pickPanel(selected: { id: string; type: string } | null, owner: string | null, pins: string[]): PanelPick {
-  if (!selected) return { kind: "none" };
-  if (owner && pins.includes(owner)) return { kind: "pin", id: owner };
-  return selected.type === "frame" ? { kind: "panel", id: selected.id } : { kind: "none" };
-}
 
 const local = (): Store | undefined => {
   try {
@@ -133,8 +89,6 @@ function useStored<T>(read: () => T, write: (v: T) => void, key: string): [T, (v
 }
 
 export const usePanelDock = () => useStored(() => readPanelDock(local()), (v) => writePanelDock(local(), v), PANEL_MINIMIZED_KEY);
-export const usePinJump = () => useStored(() => readPinJump(local()), (v) => writePinJump(local(), v), PIN_JUMP_KEY);
-export const usePins = (boardId: string) => useStored(() => readPins(local(), boardId), (v) => writePins(local(), boardId, v), pinsKey(boardId));
 
 // The floating panel sits near the top of the canvas, where a selected frame's title often is
 // too (after a pin jump or a zoom to the frame). Covering the title broke renaming: the first

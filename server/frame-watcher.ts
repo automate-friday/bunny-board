@@ -23,7 +23,7 @@ import { componentAgentIds, isComponent, type OutlineContext, VIEW_ONLY_PROPS } 
 import type { LinkTarget } from "../shared/components/link";
 import { SILENT_ACK, TRANSCRIPT_TYPE } from "../shared/components/transcript";
 import { addedMessages, addedShares, COMMENT_DELTA_PREFIX, type CommentMessage, type CommentThread, orderedMessages, readThreads, splitMentions } from "../shared/comments";
-import { resolveStartProvider } from "../shared/start-catalogue";
+import { resolveStartProvider, startEffort } from "../shared/start-catalogue";
 import { advancesTo, isStampKind, STAMP_TYPE, type StampState, stampEvent, stampMeanings, stampMessage, stampNoteMessage } from "../shared/components/stamp";
 import { type BoardLocks, DOCUMENT_ID, LOCKS_KEY, layoutChange, lockSummary, NO_LOCKS, readLocks } from "../shared/locks";
 import { type BoardConfig, frameToken } from "./config";
@@ -137,7 +137,7 @@ function httpError(status: number, message: string): Error {
 }
 
 // Binding fields only the server may change. Human edits to them are reverted.
-const SERVER_OWNED = ["agentId", "workspaceId", "boundAt", "linked", "queue", "pendingDeltas", "lastDeltaAt", "error", "introducedAt", "introPending", "previousAgentId", "restart", "host", "lastReceipt", "workspaceSetup", "bindRetry", "pendingText", "deltaDelivery", "relink", "cloud", "cloudProvider", "compressionOffer", "compression", "remoteStart"] as const;
+const SERVER_OWNED = ["agentId", "workspaceId", "boundAt", "linked", "queue", "pendingDeltas", "lastDeltaAt", "error", "introducedAt", "introPending", "previousAgentId", "forkOf", "restart", "host", "lastReceipt", "workspaceSetup", "bindRetry", "pendingText", "deltaDelivery", "relink", "cloud", "cloudProvider", "compressionOffer", "compression", "remoteStart"] as const;
 
 // A shape a person creates while the layout is locked may still be shaped by the tool
 // that is creating it (a box dragged out, a stroke, an arrow) for this long.
@@ -2009,7 +2009,7 @@ export class FrameWatcher {
       if(this.stopped||room.closed)return;
       if(this.bridge.health&&this.bridge.health().state!=='connected')throw new Error('Paseo host disconnected; binding stays queued');
       if (req.kind === "link") await this.fulfilLink(api, room, frameId, req.agentId);
-      else await this.fulfilCreate(api, room, frameId, req.provider, req.prompt, req.workspaceId, req.context, cloudProvider, req.cwd);
+      else await this.fulfilCreate(api, room, frameId, req.provider, req.prompt, req.workspaceId, req.context, cloudProvider, req.cwd, startEffort(req.thinkingOptionId));
       if(this.stopped||room.closed)return;
       const timer=this.bindRetries.get(key(room.id,frameId));if(timer)clearTimeout(timer);this.bindRetries.delete(key(room.id,frameId));
       room.write({kind:'server',reason:'bind-recovered'},ops=>{const cur=ops.get(frameId);if(cur)ops.put({...cur,meta:{...cur.meta,paseo:{...cur.meta?.paseo,bindRetry:undefined}}});});room.save();
@@ -2077,7 +2077,8 @@ export class FrameWatcher {
     // HTTP tools use the environment's reachable address; no local paths or MCP
     // executables are sent to another Mac.
     const prompt=this.openingPrompt(room,frameId,req.prompt,intent.agentId).replaceAll(`http://127.0.0.1:${this.cfg.port}`,this.cfg.publicBase);
-    await this.remote.createOnHost(intent,{provider:chosen,title,prompt,modeId:this.modeFor(chosen),labels:{board:room.id,frame:frameId,workRef:`bunny/${room.id}/${frameId}`}},persist);
+    const thinkingOptionId=startEffort(req.thinkingOptionId);
+    await this.remote.createOnHost(intent,{provider:chosen,title,prompt,modeId:this.modeFor(chosen),...(thinkingOptionId?{thinkingOptionId}:{}),labels:{board:room.id,frame:frameId,workRef:`bunny/${room.id}/${frameId}`}},persist);
     if(this.stopped||room.closed||!room.records.has(frameId))return;
     this.adoptEnclosed(room,frameId,null);
     const b=this.linkSync(room,frameId,{id:intent.agentId,title,workspaceId:intent.payload?.workspaceId??null,status:'running',host:intent.host});
@@ -2181,6 +2182,7 @@ export class FrameWatcher {
     context?: "board" | "repo",
     cloud: CloudProvider | null = null,
     cwd?: string,
+    thinkingOptionId?: string,
   ): Promise<void> {
     if(upstashDefault(this.cfg))cloud=null;
     // Shapes the frame was drawn around belong to it (tldraw does not always reparent).
@@ -2236,6 +2238,7 @@ export class FrameWatcher {
           provider: chosen,
           ...(startup.systemPrompt ? { systemPrompt: startup.systemPrompt } : {}),
           ...(modeId ? { modeId } : {}),
+          ...(thinkingOptionId ? { thinkingOptionId } : {}),
           mcpServers: { board: this.mcpServerFor(room.id, frameId, agentId) },
           toolPolicy: { preapproved: BOARD_TOOLS.map((tool) => ({ kind: "mcp" as const, server: "board", tool })) },
         },
@@ -2251,7 +2254,7 @@ export class FrameWatcher {
         : await api.agents.create({ ...options, cwd: startup.cwd });
       if (handle.id !== agentId) throw new Error(`daemon assigned ${handle.id}, expected ${agentId}`);
       workspace = handle.workspaceId ?? ws ?? undefined;
-      this.log(`created agent ${agentId} for ${room.id}/${frameId} in workspace ${workspace} (mode ${modeId ?? "provider default"})`);
+      this.log(`created agent ${agentId} for ${room.id}/${frameId} in workspace ${workspace} (mode ${modeId ?? "provider default"}, effort ${thinkingOptionId ?? "model default"})`);
     }
     const status = existing ? statusOf(existing.agent) : "running";
     // The frame was deleted (or the binding replaced) while the agent was being created:

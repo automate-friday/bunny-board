@@ -6,6 +6,7 @@ import { deepLink, usePublicBase } from "../../info";
 import type { LinkShape } from "./shape";
 import { useLinkTarget } from "./targets";
 import { Emoji } from "../../Emoji";
+import { openPlace } from "../../places";
 
 const stopDown = (e: React.PointerEvent) => e.stopPropagation();
 
@@ -58,6 +59,13 @@ export function LinkRender({ shape }: { shape: LinkShape }) {
           data-testid="link-open"
           href={href}
           onPointerDown={stopDown}
+          // A plain click opens it in place, without a page reload (and without leaving the
+          // home-screen app when the public base is another host name); ⌘/Ctrl-click a new tab.
+          onClick={(e) => {
+            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            openPlace(board, frameId || null);
+          }}
           style={{ pointerEvents: "all", border: "1px solid light-dark(#2f80ed, hsl(214 35% 39%))", background: "#2f80ed", color: "#fff", borderRadius: 6, padding: "3px 10px", textDecoration: "none", fontWeight: 600 }}
           title={href}
         >

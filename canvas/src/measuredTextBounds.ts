@@ -15,6 +15,10 @@ export function installTextBoundsMeasurements(editor: Editor) {
   const measure = () => {
     scheduled = 0;
     if (stopped || document.fonts.status !== "loaded") return;
+    // Not mid-gesture: a pass walks the page and its writes commit to the store (every shape
+    // reactor re-checks), which cost pan and drag frames. Bounds are a layout hint, so they
+    // wait until the camera and pointer settle.
+    if (editor.getInstanceState().cameraState === "moving" || editor.inputs.getIsDragging()) { schedule(); return; }
     const started = performance.now(); stats.passes++; perfCount("text-bounds-pass");
     const changes: TLShapePartial[] = [];
     const culled = editor.getCulledShapes();

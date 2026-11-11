@@ -15,3 +15,12 @@
 
 .message-body:hover > .message-source, .message-source:focus-visible, .message-source[aria-pressed="true"] { opacity: 1; }
 @media (hover: none) { .message-source { position: static; margin: 0 0 4px auto; opacity: .55; } }
+.message-markdown .message-table { margin: .5em 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+.message-markdown table { border-collapse: collapse; font-size: .95em; line-height: 1.4; }
+.message-markdown th,.message-markdown td { border: 1px solid light-dark(#dce1e6, var(--bunny-line)); padding: 4px 8px; vertical-align: top; font-variant-numeric: tabular-nums; overflow-wrap: normal; min-width: 4ch; }
+.message-markdown th:not([align]) { text-align: start; }
+.message-markdown th { font-weight: 650; background: light-dark(#f3f5f7, var(--bunny-raised)); }
+.message-markdown tbody tr:nth-child(even) { background: light-dark(#f9fafb, color-mix(in srgb, var(--bunny-raised) 50%, transparent)); }
+.message-markdown del { opacity: .7; }
+.message-markdown li:has(> input[type=checkbox]) { list-style: none; }
+.message-markdown li > input[type=checkbox] { margin: 0 .4em 0 -1.3em; vertical-align: -1px; }

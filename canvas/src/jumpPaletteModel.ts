@@ -106,6 +106,8 @@ export const recencyKey = (board: string, viewer: string) =>
   `bunny-jump:${encodeURIComponent(board)}:${encodeURIComponent(viewer)}`;
 // Agent ids are unique across boards, so sends need no board scope.
 export const AGENT_SENDS_KEY = 'bunny-agent-sends';
+// Fired on the window after a look or a send is recorded, so the frame tabs re-read.
+export const RECENCY_EVENT = 'bunny-recency';
 const LIMIT = 200;
 
 // Stored newest first as [id, epochMs]. The older format (bare frame ids) reads as time 0:
@@ -127,12 +129,19 @@ function touch(storage: StorageWriter | undefined, key: string, id: string, at: 
   times.delete(id);
   const next = new Map<string, number>([[id, at] as const, ...times].slice(0, LIMIT));
   try { storage?.setItem(key, JSON.stringify([...next])); } catch { /* Navigation still works without storage. */ }
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(RECENCY_EVENT));
   return next;
 }
 const isShape = (id: string) => id.startsWith('shape:');
 const isAgent = (id: string) => id.length > 0;
 export const readRecents = (storage: StorageReader | undefined, key: string) => readTimes(storage, key, isShape);
 export const rememberFrame = (storage: StorageWriter | undefined, key: string, id: string, at = Date.now()) => touch(storage, key, id, at, isShape);
+/** Note that this viewer looked at a frame (a frame tab peek or jump, opening its conversation). */
+export function noteViewed(board: string, viewer: string, frameId: string): void {
+  let storage: StorageWriter | undefined;
+  try { storage = window.localStorage; } catch { /* storage blocked */ }
+  rememberFrame(storage, recencyKey(board, viewer), frameId);
+}
 export const readAgentSends = (storage: StorageReader | undefined) => readTimes(storage, AGENT_SENDS_KEY, isAgent);
 export const rememberAgentSend = (storage: StorageWriter | undefined, agentId: string, at = Date.now()) => touch(storage, AGENT_SENDS_KEY, agentId, at, isAgent);
 

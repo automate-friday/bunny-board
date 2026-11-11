@@ -25,7 +25,7 @@ export function remoteStartCapability(info:ServerInfo|null):string|undefined {
 // The modern SDK observes this SAME key on reconnect. Its pending operation is
 // retained after our UI deadline; replay never invents a new creation identity.
 export async function runRemoteStart(session:HostSession,intent:RemoteStartIntent,
-  input:{workspaceTarget?:string;provider:string;title:string;prompt:string;modeId?:string;labels?:Record<string,string>},persist:(intent:RemoteStartIntent)=>void,
+  input:{workspaceTarget?:string;provider:string;title:string;prompt:string;modeId?:string;thinkingOptionId?:string;labels?:Record<string,string>},persist:(intent:RemoteStartIntent)=>void,
   timeoutMs=30000,createOnly=false):Promise<void> {
   const reason=remoteStartCapability(session.daemon.getLastServerInfoMessage());
   if(reason)throw Error(`${intent.host}: ${reason}`);
@@ -39,7 +39,7 @@ export async function runRemoteStart(session:HostSession,intent:RemoteStartInten
     const [provider,...model]=input.provider.split('/');
     if(!model.length)throw Error('Remote start requires provider/model');
     intent.payload=JSON.parse(JSON.stringify({agentId:intent.agentId,idempotencyKey:intent.key,workspaceId:workspace.id,...(input.labels?{labels:input.labels}:{}),
-      config:{provider,model:model.join('/'),cwd,title:input.title,...(input.modeId?{modeId:input.modeId}:{})}}));
+      config:{provider,model:model.join('/'),cwd,title:input.title,...(input.modeId?{modeId:input.modeId}:{}),...(input.thinkingOptionId?{thinkingOptionId:input.thinkingOptionId}:{})}}));
     intent.prompt=input.prompt;
     persist(intent); // Must succeed before any external mutation.
   }

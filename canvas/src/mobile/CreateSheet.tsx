@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { cleanName } from "../../../shared/frame-names";
 import { useVisibleViewport } from "./StartSheet";
+import { useSwipeDismiss } from "./sheetDrag";
 import { useModalHold } from "./modalHold";
 import "./startSheet.css";
 
@@ -47,6 +48,7 @@ export function CreateSheet({ kind, where, create, close }: { kind: CreateKind; 
   useModalHold();
   const [name, setName] = useState("");
   const vp = useVisibleViewport();
+  const swipe = useSwipeDismiss(close);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const t = setTimeout(() => input.current?.focus(), 60);
@@ -60,7 +62,7 @@ export function CreateSheet({ kind, where, create, close }: { kind: CreateKind; 
   return (
     <div className="bm-start-layer" data-mobile-ui data-testid={`mobile-create-${kind}`} style={{ top: vp.top, height: vp.height }}>
       <div className="bm-start-scrim" onPointerDown={close} />
-      <form className="bm-start-sheet" role="dialog" aria-modal="true" aria-label={kind === "page" ? "New page" : "New frame"} onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape") close(); }} onSubmit={(e) => { e.preventDefault(); save(); }}>
+      <form ref={swipe} className="bm-start-sheet" role="dialog" aria-modal="true" aria-label={kind === "page" ? "New page" : "New frame"} onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape") close(); }} onSubmit={(e) => { e.preventDefault(); save(); }}>
         <div className="bm-start-head">
           <span className="bm-grip-bar" aria-hidden="true" />
           <b>{kind === "page" ? "New page" : "New frame"}</b>

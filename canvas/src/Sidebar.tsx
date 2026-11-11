@@ -10,7 +10,7 @@ import { useAgentCapabilities } from "./agentCapabilities";
 import { RemoteCoverage } from "./RemoteCoverage";
 import { MessageBody } from "./MessageBody";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createShapeId, type Editor, type TLFrameShape, type TLShapeId, useValue } from "tldraw";
+import { type Editor, type TLFrameShape, type TLShapeId, useValue } from "tldraw";
 import { primerLabel } from "../../shared/components/transcript";
 import { StatusMark } from "./Dot";
 import { agentStore, displayStatus, STATUS_DOT, statusLabel, subagentCount, useAgentView, usePageVisible } from "./agents";
@@ -23,8 +23,8 @@ import { TurnControls } from "./TurnControls";
 import { agentHost, composerMaxHeight, threadSheet } from "./mobile/mobileMode";
 import { EditAgentSheet, MessageMenu, renameFrame, startBeside, TitleEdit, useLongPress } from "./mobile/ThreadTools";
 import { askReveal } from "./mobile/Reveal";
-import { besideFrame } from "./mobile/placement";
-import { startRequested } from "./FramePanel";
+import { setConversationFrame } from "./NewAgentButton";
+import { askMove } from "./mobile/MoveSheet";
 import { StopButton, useStopped } from "./mobile/StopButton";
 import { snapSheet, upVelocity, useVerticalDrag } from "./mobile/sheetDrag";
 import { infoNow } from "./info";
@@ -39,25 +39,10 @@ import { installNativeCopy, NATIVE_COPY_ATTR } from "./nativeCopy";
 import { LastSentStrip, scrollToRow } from "./LastSentStrip";
 import { chooseLastSent, useAgentSummary } from "./lastSent";
 import { humanMessages, lastHumanMessage } from "../../shared/last-message";
+import { takeHalfStop } from "./mobile/threadStop";
 
 const iconBtn: React.CSSProperties = { display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: "none", background: "transparent", cursor: "pointer", font: "16px system-ui", color: "light-dark(#475569, var(--bunny-muted))", padding: "2px 6px", borderRadius: 6, minWidth: 30, minHeight: 30 };
 const chip: React.CSSProperties = { display: "inline-block", padding: "1px 6px", borderRadius: 999, fontSize: 11, background: "light-dark(#f1f5f9, var(--bunny-raised))", color: "light-dark(#475569, var(--bunny-muted))" };
-
-// Desktop "+ New agent": an empty frame beside this one, selected and in view, its panel open
-// on the start form (FramePanel's startRequested). The phone uses its start sheet instead.
-function newAgentBeside(editor: Editor, frameId: string): boolean {
-  const b = editor.getShapePageBounds(frameId as TLShapeId);
-  const page = editor.getAncestorPageId(frameId as TLShapeId);
-  if (!b || !page) return false;
-  const others = [...editor.getPageShapeIds(page)].flatMap((id) => (editor.getShape(id)?.type === "frame" ? (editor.getShapePageBounds(id) ?? []) : []));
-  const at = besideFrame(b, others);
-  const id = createShapeId();
-  editor.createShape({ id, type: "frame", parentId: page, x: at.x, y: at.y, props: { w: 960, h: 640, name: "New agent" } });
-  startRequested.add(id);
-  editor.select(id);
-  editor.zoomToBounds({ x: at.x, y: at.y, w: 960, h: 640 }, { animation: { duration: 300 }, inset: 80 });
-  return true;
-}
 
 // Right-hand sidebar for a bound frame, laid out like Paseo's chat: a one-line header
 // (agent, model, machine, status), the conversation, and the reply box at the bottom.
@@ -70,7 +55,15 @@ const SHEET_STOPS = [0.24, 0.55, 0.9];
 const PHONE_STOPS = [0.34, 0.6, 0.94];
 const PHONE_WIDE_STOPS = [0.6, 0.98];
 
-export function Sidebar({ editor, frameId, boardId, onClose, onArchive, sheet = false, mobile = false, reading = false, onReadingChange }: { editor: Editor; frameId: string; boardId: string; onClose: () => void; onArchive?: (frameId: string) => void; sheet?: boolean; mobile?: boolean; reading?: boolean; onReadingChange?: (reading: boolean) => void }) {
+// `embedded`: the same conversation in a frame peek's side pane (Portals.tsx); it fills its
+// pane and leaves "+ New agent" and the main sidebar alone, and – hides the pane.
+export function Sidebar({ editor, frameId, boardId, onClose, onArchive, sheet = false, mobile = false, reading = false, onReadingChange, embedded = false }: { editor: Editor; frameId: string; boardId: string; onClose: () => void; onArchive?: (frameId: string) => void; sheet?: boolean; mobile?: boolean; reading?: boolean; onReadingChange?: (reading: boolean) => void; embedded?: boolean }) {
+  // "+ New agent" (top-left bar) goes beside the conversation you are reading.
+  useEffect(() => {
+    if (embedded) return;
+    setConversationFrame(frameId);
+    return () => setConversationFrame(null);
+  }, [frameId, embedded]);
   const rootRef = useRef<HTMLDivElement>(null);
   const readingButton = useRef<HTMLButtonElement>(null);
   const wideReading = reading && !sheet && !mobile;
@@ -99,7 +92,8 @@ export function Sidebar({ editor, frameId, boardId, onClose, onArchive, sheet = 
   // above the keyboard and the thread keeps the rest (mobileMode.ts threadSheet).
   const phoneStops = (wideSheet ? PHONE_WIDE_STOPS : PHONE_STOPS).map((f) => Math.round(viewport.height * f));
   // Opens at the tallest stop: the conversation is what you came for (drag down for the frame).
-  const [phoneStop, setPhoneStop] = useState(wideSheet ? PHONE_WIDE_STOPS.length - 1 : PHONE_STOPS.length - 1);
+  // Right after a start it opens at half, so the new frame shows above it (mobile/threadStop.ts).
+  const [phoneStop, setPhoneStop] = useState(() => (wideSheet ? PHONE_WIDE_STOPS.length - 1 : takeHalfStop(frameId) ? 1 : PHONE_STOPS.length - 1));
   const [dragH, setDragH] = useState<number | null>(null);
   const phoneSheet = sheet && mobile ? threadSheet({ height: viewport.height, top: viewport.top, innerHeight: document.documentElement.clientHeight || window.innerHeight }, (dragH ?? phoneStops[Math.min(phoneStop, phoneStops.length - 1)]) / viewport.height) : null;
   const dragBase = useRef(0);
@@ -291,7 +285,7 @@ export function Sidebar({ editor, frameId, boardId, onClose, onArchive, sheet = 
   return (
     <div
       ref={rootRef}
-      data-testid="sidebar"
+      data-testid={embedded ? "peek-conversation" : "sidebar"}
       {...{ [NATIVE_COPY_ATTR]: "" }}
       data-sheet={sheet ? "1" : "0"}
       data-reading={wideReading ? "1" : "0"}
@@ -305,14 +299,16 @@ export function Sidebar({ editor, frameId, boardId, onClose, onArchive, sheet = 
               // width in portrait, the right-hand side in landscape.
               { position: "fixed", left: wideSheet ? viewport.left + viewport.width - Math.min(560, viewport.width * 0.58) : viewport.left, width: wideSheet ? Math.min(560, viewport.width * 0.58) : viewport.width, top: phoneSheet.top, height: phoneSheet.height, maxHeight: viewport.height, boxSizing: "border-box", borderTop: "1px solid light-dark(#e2e8f0, var(--bunny-line))", borderRadius: phoneSheet.keyboard ? 0 : "14px 14px 0 0", boxShadow: "0 -6px 24px rgba(0,0,0,0.16)", paddingBottom: phoneSheet.keyboard ? 0 : "env(safe-area-inset-bottom)", overscrollBehavior: "contain", transition: dragH === null ? "height 160ms ease-out, top 160ms ease-out" : "none" }
             : { position: "fixed", left: 0, right: 0, top: viewport.top + viewport.height - sheetH, height: sheetH, boxSizing: "border-box", borderTop: "1px solid light-dark(#e2e8f0, var(--bunny-line))", borderRadius: "14px 14px 0 0", boxShadow: "0 -6px 24px rgba(0,0,0,0.16)", paddingBottom: "env(safe-area-inset-bottom)", overscrollBehavior: "contain" }
-          : { width: wideReading ? "calc(100vw - 320px)" : "min(420px, 45vw)", flexShrink: 0, borderLeft: "1px solid light-dark(#e2e8f0, var(--bunny-line))" }),
+          : embedded
+            ? { position: "absolute", inset: 0, borderLeft: "1px solid light-dark(#e2e8f0, var(--bunny-line))" }
+            : { width: wideReading ? "calc(100vw - 320px)" : "min(420px, 45vw)", flexShrink: 0, borderLeft: "1px solid light-dark(#e2e8f0, var(--bunny-line))" }),
         background: "light-dark(#fff, var(--bunny-surface))",
         color: "light-dark(#0f172a, hsl(222 50% 74%))",
         pointerEvents: "all",
         display: "flex",
         flexDirection: "column",
         font: sheet ? "15px system-ui, sans-serif" : "13px system-ui, sans-serif",
-        zIndex: 400,
+        zIndex: embedded ? undefined : 400,
       }}
     >
       {sheet && phoneSheet ? (
@@ -383,8 +379,6 @@ export function Sidebar({ editor, frameId, boardId, onClose, onArchive, sheet = 
         {/* Stop and Continue sit right above the reply box (TurnControls); on the phone Stop is
             the reply box's Send button while the agent works (StopButton). */}
         {!sheet && !mobile && onReadingChange ? <button ref={readingButton} type="button" data-testid="sidebar-reading-toggle" aria-label={wideReading ? "Exit reading view" : "Expand conversation"} aria-pressed={wideReading} title={wideReading ? "Back to canvas (Esc)" : "Expand conversation for reading"} onClick={() => onReadingChange(!wideReading)} style={{ ...iconBtn, fontSize: 13, whiteSpace: "nowrap" }}>{wideReading ? "↙ Back" : "⛶"}</button> : null}
-        {/* One tap to a new agent beside this frame, without going back to the board first. */}
-        <button type="button" data-testid="sidebar-new-agent" aria-label="New agent" title="New agent beside this one" style={iconBtn} onClick={() => (mobile ? void startBeside({ frameId, agentId, binding: paseo, frameName: frame?.props.name ?? "", boardId }) : newAgentBeside(editor, frameId))}>+</button>
         <div style={{ position: "relative" }}>
           <button type="button" data-testid="sidebar-menu" aria-label="More" aria-expanded={menu} style={{ ...iconBtn, ...(mobile ? { width: 40, height: 40 } : {}) }} onClick={() => setMenu((m) => !m)}><AppIcon name="more" size={20} /></button>
           {menu ? (
@@ -396,11 +390,11 @@ export function Sidebar({ editor, frameId, boardId, onClose, onArchive, sheet = 
                   <button type="button" className="bm-menu-action" data-testid="sidebar-edit-agent" onClick={() => { setMenu(false); setSettingsOpen(true); }}>
                     ✎ Edit agent settings
                   </button>
-                  <button type="button" className="bm-menu-action" data-tone="primary" data-testid="sidebar-agent-here" onClick={() => { setMenu(false); void startBeside({ frameId, agentId, binding: paseo, frameName: frame?.props.name ?? "", boardId }); }}>
-                    + Agent here
-                  </button>
                   <button type="button" className="bm-menu-action" data-testid="sidebar-show-on-board" onClick={() => { setMenu(false); askReveal(frameId); }}>
                     ◎ Show on board
+                  </button>
+                  <button type="button" className="bm-menu-action" data-testid="sidebar-move-frame" onClick={() => { setMenu(false); askMove(frameId); }}>
+                    ✥ Move frame…
                   </button>
                 </>
               ) : null}
@@ -413,7 +407,7 @@ export function Sidebar({ editor, frameId, boardId, onClose, onArchive, sheet = 
           ) : null}
         </div>
         {mobile ? <button type="button" data-testid="mobile-collapse" onClick={onClose} style={{ ...iconBtn, width: 40, height: 40 }} aria-label="Collapse the thread"><AppIcon name="chevron-down" size={20} /></button> : null}
-        {mobile ? null : <button type="button" onClick={onClose} style={{...iconBtn,minWidth:36,minHeight:36}} aria-label="Collapse sidebar" title="Collapse sidebar; use the edge arrow to reopen"><AppIcon name="chevron-right" /></button>}
+        {mobile ? null : embedded ? <button type="button" data-testid="peek-chat-hide" onClick={onClose} style={{...iconBtn,minWidth:36,minHeight:36}} aria-label="Hide the conversation" title="Hide the conversation (Chat brings it back)"><AppIcon name="chevron-right" /></button> : <button type="button" onClick={onClose} style={{...iconBtn,minWidth:36,minHeight:36}} aria-label="Collapse sidebar" title="Collapse sidebar; use the edge arrow to reopen"><AppIcon name="chevron-right" /></button>}
       </header>
 
       {lastSent ? <LastSentStrip text={lastSent.text} full={lastFull} mobile={mobile} onGo={goToLast} mine={mine} onJump={goToRow} /> : null}

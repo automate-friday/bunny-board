@@ -2,7 +2,7 @@
 // - long-press the agent's name in the header to rename it in place (Enter or Done saves,
 //   Esc or tapping away cancels);
 // - ⋯ → Edit agent settings: Name with the model, effort, access and mode controls;
-// - ⋯ → + Agent here, and long-press a message → Start agent about this: the start sheet for a
+// - + New in the top bar, and long-press a message → Start agent about this: the start sheet for a
 //   new frame beside this one, prefilled like this agent (mobile/StartSheet.tsx askStartBeside).
 // A rename writes the frame's name; the board server carries it to the agent's Paseo title
 // (server/frame-names.ts), as on desktop.

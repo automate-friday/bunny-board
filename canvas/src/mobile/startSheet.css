@@ -169,3 +169,33 @@ html.bunny-mobile, html.bunny-mobile body { overflow-x: hidden; overscroll-behav
 /* Dark mode: the model dot and Start read as live, not disabled. */
 :root[data-theme="dark"] .bm-model-trigger i { background: hsl(249 88% 74%); }
 :root[data-theme="dark"] .bm-start-go { background: #6F5CE6; border-color: #8875F6; }
+
+/* Adds to: page chips (a new frame only), under the place. */
+.bm-start-pages { flex-basis: 100%; margin-top: 6px; }
+.bm-start-pages button { min-height: 40px; }
+
+/* Model sheet: the chosen model's effort, and the custom model id entry. */
+.bm-model-effort { display: flex; align-items: center; gap: 8px; padding: 8px calc(env(safe-area-inset-right) + 12px) 4px calc(env(safe-area-inset-left) + 12px); border-top: 1px solid light-dark(rgba(46,31,22,.12), rgba(185,197,216,.22)); }
+.bm-model-effort .beff button.beff-trigger { min-height: 40px; font-size: 15px; }
+.bm-model-effort .beff-menu button.beff-opt { min-height: 40px; font-size: 15px; }
+.bm-model-list button.bm-model-custom { min-height: 44px; font-size: 15px; color: light-dark(#6F5CE6, hsl(248 73% 74%)); }
+.bm-model-list form button { min-height: 40px; font-size: 15px; }
+.bm-model-list form input { font-size: 16px !important; }
+
+/* Page dropdown (Adds to): one native select styled as the model trigger, the phone's own
+   picker when tapped. Replaces the wrap of page buttons that took half the sheet. */
+.bm-start-pagepick { position: relative; flex-basis: 100%; display: flex; align-items: center; margin-top: 4px; min-width: 0; }
+.bm-start-pagepick select {
+  appearance: none; -webkit-appearance: none; width: 100%; min-width: 0; box-sizing: border-box; min-height: 44px; padding: 0 40px 0 14px; cursor: pointer;
+  border: 1px solid light-dark(rgba(46,31,22,.18), color-mix(in srgb, hsl(23 35% 39%) 18%, transparent)); border-radius: 12px;
+  background: light-dark(#fff, var(--bunny-surface)); color: light-dark(#2E1F16, var(--bunny-ink)); font: 600 16px Inter, system-ui, sans-serif;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.bm-start-pagepick select:disabled { opacity: .55; }
+.bm-start-pagepick svg { position: absolute; right: 14px; pointer-events: none; color: light-dark(#6F5CE6, hsl(248 73% 74%)); }
+
+/* Swipe-to-dismiss (sheetDrag.ts useSwipeDismiss): the grip, title and buttons never pan the page
+   behind the sheet (that carried the sheet up and left a gap below it on iOS); only the form
+   scrolls, and its overscroll stays inside it. */
+.bm-start-layer { overscroll-behavior: none; }
+.bm-start-scrim, .bm-start-head, .bm-start-foot { touch-action: none; }

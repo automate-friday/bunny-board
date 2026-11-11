@@ -10,21 +10,27 @@ import {startHostsMemo,watchStartHosts} from "../startHosts";
 // this sheet goes away again if the sheet is dismissed without Start.
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { Editor, TLFrameShape, TLShapeId } from "tldraw";
+import type { Editor, TLFrameShape, TLPageId, TLShapeId } from "tldraw";
 import { useValue } from "tldraw";
 import { api } from "../api";
 import { boardInfo, infoNow } from "../info";
 import { ModelSheet } from "./ModelSheet";
 import { placePhotos } from "./placePhotos";
 import { PhotoIcon, PhotoTray } from "./PhotoTray";
+import { usePages } from "./pages";
+import { whereOnBoard } from "./Reveal";
+import { newFrameSpot } from "./mobileMode";
 import { useModalHold } from "./modalHold";
+import { useSwipeDismiss } from "./sheetDrag";
 import { cleanName, nameFromRequest } from "../../../shared/frame-names";
 import { B, BUNNY_CONTROLS_CSS, fieldLabel } from "../bunnyTheme";
-import { FALLBACK_PROVIDERS, fallbackCatalogue, findChoice, initialChoice, type StartCatalogue } from "../../../shared/start-catalogue";
+import { FALLBACK_PROVIDERS, effortFor, fallbackCatalogue, rememberedChoice, type StartCatalogue, withCustomModels } from "../../../shared/start-catalogue";
+import { addCustomModel, customModels, lastStartChoice, lastStartPage, rememberStartChoice, rememberStartPage } from "../startChoice";
 import { CLOUD_PROVIDERS, CLOUD_PROVIDER_LABEL, type CloudProvider } from "../../../shared/cloud-provider";
 import { upstashDefault, executionLabel, fleetHostsForRuntime, initialRunsOn, machineLabel, runsOnRequest, runsOnSummary } from "../../../shared/conversation-links";
 import "./startSheet.css";
-import { QuickStarts } from "../QuickStarts";
+import { GhostUse, QuickStarts, useQuickStartData } from "../QuickStarts";
+import { useGhostIdea, useIdle } from "../ghostIdea";
 import { recordOpeningPrompt, takePendingPrompt } from "../quickStartPrompts";
 
 // "Open the start sheet for this frame", from anywhere on the phone (the frame panel's
@@ -40,7 +46,7 @@ export function useAskedStartSheet(): string | null {
 }
 
 // What the sheet starts with when a thread asks for "an agent like this one, next to it"
-// (+ Agent here, Start agent about this): the model, where it runs, the opening message.
+// (+ New in the top bar, Start agent about this): the model, where it runs, the opening message.
 // `name` and `files` (screenshots placed in the frame before the agent starts) come from Tell Bunny.
 export type StartPrefill = { provider?: string | null; host?: string; worker?: boolean; cloudProvider?: string | null; prompt?: string; name?: string; files?: File[] };
 // "Start an agent next to this frame": from the thread sheet (Sidebar); the shell draws the
@@ -65,11 +71,29 @@ export function useVisibleViewport(): { top: number; height: number } {
   const [vp, setVp] = useState(read);
   useEffect(() => {
     const v = window.visualViewport;
-    const update = () => setVp(read());
+    // iOS reports the keyboard closing before its animation ends, and can leave the page scrolled
+    // by the focused field: the sheet then sat up the screen with a gap below it. Read again
+    // once things settle, and with the keyboard gone put the page back (the phone shell never
+    // scrolls the document).
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const settle = () => {
+      setVp(read());
+      const kb = !!v && v.height < window.innerHeight - 120;
+      if (!kb && (window.scrollY || document.documentElement.scrollTop)) {
+        window.scrollTo(0, 0);
+        setVp(read());
+      }
+    };
+    const update = () => {
+      setVp(read());
+      timers.splice(0).forEach(clearTimeout);
+      timers.push(setTimeout(settle, 120), setTimeout(settle, 450));
+    };
     v?.addEventListener("resize", update);
     v?.addEventListener("scroll", update);
     window.addEventListener("resize", update);
     return () => {
+      timers.forEach(clearTimeout);
       v?.removeEventListener("resize", update);
       v?.removeEventListener("scroll", update);
       window.removeEventListener("resize", update);
@@ -78,9 +102,6 @@ export function useVisibleViewport(): { top: number; height: number } {
   return vp;
 }
 
-// The model the last agent started from this phone used (a prefill still wins).
-const LAST_PROVIDER = "bunny:last-provider";
-const lastProvider = () => { try { return localStorage.getItem(LAST_PROVIDER); } catch { return null; } };
 const MAX_PHOTOS = 6;
 // Image files from a paste (a screenshot copied on the phone or the clipboard).
 const pastedImages = (e: React.ClipboardEvent) => Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
@@ -111,15 +132,58 @@ export function emptyFrame(editor: Editor, id: string): boolean {
 // `where`: where the frame is or goes ("New frame right of “Pricing page” · Page 1").
 // `beside`: the sheet is on an existing frame without an agent. It starts "In this frame" by
 // default; "New frame next to it" draws a frame beside it at Start (`beside.make`) instead.
-export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, where, boardId, beside }: { editor: Editor; frameId: string; onCancel: () => void; onStarted: (frameId: string) => void; prefill?: StartPrefill; where?: string; boardId?: string; beside?: { name: string; make: () => string | null } }) {
+// `movable`: the shell drew this frame for the sheet, so the page it goes on can still change.
+export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, where, boardId, beside, movable }: { editor: Editor; frameId: string; onCancel: () => void; onStarted: (frameId: string) => void; prefill?: StartPrefill; where?: string; boardId?: string; beside?: { name: string; make: () => string | null }; movable?: boolean }) {
   const [placeNew, setPlaceNew] = useState(false);
   useModalHold();
   const live = useValue("start-sheet-frame", () => editor.getShape(frameId as TLShapeId) as TLFrameShape | undefined, [editor, frameId]);
   const vp = useVisibleViewport();
+  // Pages: a new frame can move to another page (free space there); an existing frame keeps its own.
+  const pages = usePages(editor);
+  const pageId = useValue("start-sheet-page", () => editor.getAncestorPageId(frameId as TLShapeId) ?? null, [editor, frameId]);
+  // The page dropdown names the page, so the line under it leaves it out.
+  const pickPage = movable && pages.length > 1;
+  const liveWhere = useValue("start-sheet-where", () => (movable ? `New frame ${whereOnBoard(editor, frameId, !pickPage)}` : null), [editor, frameId, movable, pickPage]);
+  // Offered first in the dropdown: the page the sheet opened on (where you are) and the page
+  // last started on from this device.
+  const [herePage] = useState(pageId);
+  const lastPage = useMemo(() => (boardId ? lastStartPage(boardId) : null), [boardId]);
+  const toPage = (page: string) => {
+    if (!movable || page === pageId || busy.current) return;
+    const boxes = editor.getSortedChildIdsForParent(page as TLPageId).flatMap((id) => {
+      const s = editor.getShape(id);
+      return s?.type === "frame" ? (editor.getShapePageBounds(id) ?? []) : [];
+    });
+    const at = newFrameSpot(boxes);
+    editor.moveShapesToPage([frameId as TLShapeId], page as TLPageId);
+    editor.updateShape({ id: frameId as TLShapeId, type: "frame", x: at.x, y: at.y });
+  };
+  // Keyboard up (or a field tapped): the field being typed in scrolls into the part of the
+  // sheet still visible, never left under the keyboard.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const revealField = () => {
+    const el = document.activeElement as HTMLElement | null;
+    if (!el || !bodyRef.current?.contains(el) || !el.matches("input, textarea")) return;
+    requestAnimationFrame(() => el.scrollIntoView({ block: "nearest" }));
+  };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: on each visible-viewport change.
+  useEffect(() => {
+    revealField();
+    const t = setTimeout(revealField, 320); // after iOS's keyboard animation
+    return () => clearTimeout(t);
+  }, [vp.height, vp.top]);
   const machine = useAgentMachine();
   const [catalogue, setCatalogue] = useState<StartCatalogue | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
+  // Reasoning effort (Paseo thinkingOptionId); null is the model's default.
+  const [effort, setEffort] = useState<string | null>(null);
+  const [custom, setCustom] = useState(customModels);
+  const shownCatalogue = catalogue ? withCustomModels(catalogue, custom) : null;
   const [line, setLine] = useState(() => prefill?.prompt ?? takePendingPrompt(frameId) ?? "");
+  // Starter cards and, after a quiet 10 s, ghost ideas in the empty message box.
+  const untouched = !line.trim();
+  const quick = useQuickStartData({ editor, frameId, idle: useIdle(untouched) });
+  const ghost = useGhostIdea(quick.ideas, untouched);
   // Screenshots go into the frame before the agent starts: Tell Bunny's, plus any added here.
   const [photos, setPhotos] = useState<File[]>(() => prefill?.files ?? []);
   const previews = useMemo(() => photos.map((f) => URL.createObjectURL(f)), [photos]);
@@ -171,6 +235,8 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
   const [codexReadiness, setCodexReadiness] = useState<{ ready: boolean; error?: string } | null>(null);
   const [pending, setPending] = useState(false);
   const busy = useRef(false);
+  // Swipe down to dismiss, not while a start is in flight (Cancel is the same).
+  const swipe = useSwipeDismiss(() => !busy.current && onCancel(), !pending);
 
   // Paseo's harness and model catalogue; asked again while a harness is still loading.
   const loadingHarness = !!catalogue?.harnesses.some((h) => h.status === "loading");
@@ -184,14 +250,14 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
           .then((c) => {
             if (gone) return;
             setCatalogue(c);
-            // The prefilled model when the catalogue offers it, else the usual default.
-            // (a harness with no model known: that harness's default model).
+            // A prefill (an agent like that one) first, then the model and effort last started
+            // from this device, when the catalogue still offers them; else the usual default.
             setProvider((p) => {
               if (p) return p;
-              // A prefill (an agent like that one) first, then the model last started here.
-              const want = prefill?.provider || lastProvider();
-              const like = want ? findChoice(c, want) : null;
-              return like?.model?.value ?? (like?.harness ? (like.harness.models.find((m) => m.isDefault) ?? like.harness.models[0])?.value : undefined) ?? initialChoice(c);
+              const last = lastStartChoice();
+              const r = rememberedChoice(withCustomModels(c, customModels()), prefill?.provider ? { provider: prefill.provider, effort: last?.effort } : last);
+              setEffort(r.effort);
+              return r.provider;
             });
           }),
       catalogue ? 5000 : 0,
@@ -231,10 +297,11 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
     if (busy.current || !ready || !provider || !live || paseo.agentId || paseo.request) return;
     busy.current = true;
     setPending(true);
-    try { localStorage.setItem(LAST_PROVIDER, provider); } catch { /* storage blocked */ }
+    rememberStartChoice({ provider, effort });
+    if (movable && boardId && pageId) rememberStartPage(boardId, pageId);
     const by = window.__board?.userName ?? "User";
     recordOpeningPrompt(line);
-    const request = { kind: "create", provider, prompt: line.trim() || undefined, ...runsOnRequest(ephemeral ? false : cloud, cloudProvider, startHost), requestedAt: Date.now(), by };
+    const request = { kind: "create", provider, ...(effort ? { thinkingOptionId: effort } : {}), prompt: line.trim() || undefined, ...runsOnRequest(ephemeral ? false : cloud, cloudProvider, startHost), requestedAt: Date.now(), by };
     // "New frame next to it": the frame is drawn now, beside this one.
     const targetId = placeNew && beside ? beside.make() : live.id;
     const target = targetId ? (editor.getShape(targetId as TLShapeId) as TLFrameShape | undefined) : undefined;
@@ -277,18 +344,19 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
   // A new frame beside this one does not take this frame's name.
   const derivedNew = nameFromRequest(line.replace(/^[ \t]*> ?/gm, "")) || "New agent";
   const boardName = !boardId || boardId === "main" ? "Bunny board" : boardId;
-  const whereText = beside ? (placeNew ? `A new frame beside “${beside.name}”` : `In “${beside.name}”`) : where;
+  const pageName = pages.find((p) => p.id === pageId)?.name ?? "";
+  const whereText = beside ? (placeNew ? `A new frame beside “${beside.name}”` : `In “${beside.name}”`) + (pageName && pages.length > 1 ? ` · ${pageName}` : "") : liveWhere ?? where;
   return (
     <div className="bm-start-layer" data-mobile-ui data-testid="mobile-start-layer" style={{ top: vp.top, height: vp.height }}>
       <style>{BUNNY_CONTROLS_CSS}</style>
       <div className="bm-start-scrim" onPointerDown={() => !busy.current && onCancel()} />
-      <div className="bm-start-sheet" data-testid="mobile-start-sheet" data-full={full} data-kb={vp.height < window.innerHeight - 120} role="dialog" aria-modal="true" aria-label="Start a new agent" onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape" && !busy.current) onCancel(); }}>
+      <div ref={swipe} className="bm-start-sheet" data-testid="mobile-start-sheet" data-full={full} data-kb={vp.height < window.innerHeight - 120} role="dialog" aria-modal="true" aria-label="Start a new agent" onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape" && !busy.current) onCancel(); }}>
         <div className="bm-start-head">
           <span className="bm-grip-bar" aria-hidden="true" />
           <b>New agent</b>
           {photoError ? <small role="alert" style={{ color: B.danger }}>{photoError}</small> : null}
         </div>
-        <div className="bm-start-body" data-testid="start-form">
+        <div className="bm-start-body" data-testid="start-form" ref={bodyRef} onFocus={revealField}>
           {beside ? (
             <div role="radiogroup" aria-label="Where" data-testid="start-place" className="bm-start-seg bm-start-wrap">
               <button type="button" role="radio" data-testid="start-place-here" aria-checked={!placeNew} data-on={!placeNew} onClick={() => setPlaceNew(false)}>
@@ -303,6 +371,32 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
             <span style={fieldLabel}>Adds to</span>
             <b data-testid="start-board">{boardName}</b>
             {whereText ? <small data-testid="start-where">{whereText}</small> : null}
+            {pickPage ? (
+              // One dropdown (the phone's own picker), not a wall of page buttons: the page you
+              // are on and the one last used first, then every page.
+              <label className="bm-start-pagepick" data-testid="start-page">
+                <span className="bm-start-sr">Page</span>
+                <select data-testid="start-page-select" aria-label="Page" value={pageId ?? ""} disabled={pending} onChange={(e) => toPage(e.target.value)}>
+                  {(() => {
+                    const top = [herePage ? { id: herePage, note: "this page" } : null, lastPage && lastPage !== herePage ? { id: lastPage, note: "last used" } : null].flatMap((t) => (t && pages.some((p) => p.id === t.id) ? [t] : []));
+                    const name = (id: string) => pages.find((p) => p.id === id)?.name ?? "";
+                    return (
+                      <>
+                        {top.length ? (
+                          <optgroup label="Suggested">
+                            {top.map((t) => <option key={t.id} value={t.id} data-testid="start-page-option" data-page-id={t.id}>{`${name(t.id)} · ${t.note}`}</option>)}
+                          </optgroup>
+                        ) : null}
+                        <optgroup label="All pages">
+                          {pages.filter((p) => !top.some((t) => t.id === p.id)).map((p) => <option key={p.id} value={p.id} data-testid="start-page-option" data-page-id={p.id}>{p.name}</option>)}
+                        </optgroup>
+                      </>
+                    );
+                  })()}
+                </select>
+                <ChevronIcon />
+              </label>
+            ) : null}
           </div>
           <label className="bm-start-field">
             <span style={fieldLabel}>Name</span>
@@ -310,15 +404,23 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
           </label>
           <div className="bm-start-field">
             <span style={fieldLabel}>Model</span>
-            <ModelSheet catalogue={catalogue} value={provider} onChange={setProvider} />
+            <ModelSheet
+              catalogue={shownCatalogue}
+              value={provider}
+              effort={effort}
+              onChange={(v) => { const e = effortFor(shownCatalogue, v, effort); setProvider(v); setEffort(e); rememberStartChoice({ provider: v, effort: e }); }}
+              onEffort={(e) => { setEffort(e); rememberStartChoice({ provider, effort: e }); }}
+              onCustom={(v) => { setCustom(addCustomModel(v)); setProvider(v); rememberStartChoice({ provider: v, effort }); }}
+            />
           </div>
           <div className="bm-start-message">
-            <textarea data-testid="opening-line" className="bm-start-text" rows={3} aria-label="Opening message" placeholder="Opening message (optional)" value={line} onChange={(e) => setLine(e.target.value)} onPaste={(e) => { const imgs = pastedImages(e); if (imgs.length) { e.preventDefault(); addPhotos(imgs); } }} />
+            <textarea data-testid="opening-line" className="bm-start-text" rows={3} aria-label="Opening message" placeholder={ghost.text || "Opening message (optional)"} value={line} onChange={(e) => setLine(e.target.value)} onKeyDown={(e) => { if (e.key === "Tab" && !e.shiftKey && ghost.idea && !line) { e.preventDefault(); setLine(ghost.idea); } }} onPaste={(e) => { const imgs = pastedImages(e); if (imgs.length) { e.preventDefault(); addPhotos(imgs); } }} />
             <button type="button" className="bm-start-expand" data-testid="start-fullscreen" aria-pressed={full} aria-label={full ? "Close full screen message" : "Write the message full screen"} onClick={() => setFull((f) => !f)}>
               {full ? <CollapseIcon /> : <ExpandIcon />}
             </button>
           </div>
-          {line.trim() ? null : <QuickStarts layout="row" onPick={(s) => setLine(s.prompt)} />}
+          {ghost.idea ? <GhostUse onUse={() => ghost.idea && setLine(ghost.idea)} /> : null}
+          {line.trim() ? null : <QuickStarts data={quick} layout="compact" onPick={(s) => setLine(s.prompt)} />}
           <div className="bm-start-photos" data-testid="start-photos">
             <PhotoTray photos={photos} previews={previews} setPhotos={setPhotos} disabled={pending} />
             <input ref={picker} type="file" accept="image/*" multiple hidden data-testid="start-photo-input" onChange={(e) => { const picked = Array.from(e.target.files ?? []); e.target.value = ""; addPhotos(picked); }} />
@@ -393,6 +495,9 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
   );
 }
 
+const ChevronIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+);
 const ExpandIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
 );

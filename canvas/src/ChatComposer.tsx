@@ -4,7 +4,6 @@ import type { AgentView } from "./agents";
 import { stop } from "./TimelineItemView";
 import { rememberAgentSend } from "./jumpPaletteModel";
 import { PhotoIcon, PhotoTray } from "./mobile/PhotoTray";
-import { type MidTurn, USER_NOTES } from "../../shared/send-capabilities";
 import { canWithdraw, composerBegin, composerEdit, composerSends, composerSettle, composerSettleTracked, type ComposerState, composerWithdraw, deliveryLabel, enterSends, newMessageId, pendingSend, previousSend, type PromptResponse, restoreComposer, type Sent, sendId, settleSend } from "./frameChatDelivery";
 import { agentSummaryChanged } from "./lastSent";
 
@@ -307,15 +306,6 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
         </div>
       ) : null}
       {withdrawError ? <div role="alert" data-testid="reply-withdraw-error" style={{ fontSize: compact ? 10 : 11, color: "light-dark(#b00020, hsl(349 88% 74%))" }}>{withdrawError}</div> : null}
-      {sent?.mode && sent.mode in USER_NOTES && !(large && !["sending", "queued", "accepted"].includes(sent.outcome)) ? (
-        // What happens to this message if the agent is busy, what can still interrupt it,
-        // and what to do (shared/send-capabilities.ts USER_NOTES; the technical version
-        // is MODE_NOTES / MISSING_PRIMITIVE, for docs).
-        <details data-testid="reply-mode" data-mode={sent.mode} style={{ fontSize: compact ? 10 : 11, color: "light-dark(#64748b, var(--bunny-muted))" }}>
-          <summary style={{ cursor: "pointer" }}>ⓘ {USER_NOTES[sent.mode as MidTurn].summary}</summary>
-          <div>{USER_NOTES[sent.mode as MidTurn].detail}</div>
-        </details>
-      ) : null}
       {sent?.outcome === "failed" ? (
         <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: compact ? 10 : 11, color: "light-dark(#64748b, var(--bunny-muted))" }}>
           {sent.detail ? <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sent.detail}</span> : null}

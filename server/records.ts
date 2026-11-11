@@ -22,7 +22,7 @@ export interface FramePaseoMeta {
   compression?: { messageId: string; archiveId: string; w: number; h: number; status: "pending" | "complete" };
   relink?: {agentId:string;host?:string;reason:"restored-or-copied";requiresConfirmation:true};
   request?:
-    | { kind: "create"; cwd?: string; provider?: string; host?: string; workspaceId?: string; context?: "board" | "repo"; prompt?: string; cloud?: boolean; cloudProvider?: CloudProvider; requestedAt: number; by?: string }
+    | { kind: "create"; cwd?: string; provider?: string; host?: string; workspaceId?: string; context?: "board" | "repo"; prompt?: string; cloud?: boolean; cloudProvider?: CloudProvider; thinkingOptionId?: string; requestedAt: number; by?: string }
     | { kind: "link"; agentId: string; requestedAt: number; by?: string };
   remoteStart?: import("./remote-start").RemoteStartIntent;
   workspaceSetup?: {phase: "provisioning"|"fallback"|"queued"|"ready";mode:"plain"|"repo"|"stored";workspaceId?:string;cwd?:string;reason?:string;fallbackFrom?:string;startedAt?:number};
@@ -54,6 +54,8 @@ export interface FramePaseoMeta {
   lastReceipt?: { delivery: string; at: number; traceId?: string; error?: string };
   // "Restart with board tools": the agent this frame was bound to before.
   previousAgentId?: string;
+  // Started by "Fork conversation to new frame" (frame-fork.ts): the frame and agent it branched from.
+  forkOf?: { frameId: string; agentId: string };
   // Set while a restart is creating the new agent: the binding to restore if the new
   // agent never appears (the server stopped mid-restart).
   restart?: { from: string; at: number; prev: Record<string, unknown> };

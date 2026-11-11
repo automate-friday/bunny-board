@@ -1,4 +1,4 @@
-// "+ Agent here" / "Start agent about this" from a thread: the new frame goes right beside
+// "+ New" (top bar) / "Start agent about this" from a thread: the new frame goes right beside
 // the one you are in, on the same page, in free space (never on top of another frame).
 
 type Box = { x: number; y: number; w: number; h: number };

@@ -34,13 +34,13 @@ function pageFrames(editor: Editor, id: string) {
 }
 
 // "right of “Pricing page” · Page 1", or just the page when the frame is alone there.
-export function whereOnBoard(editor: Editor, id: string): string {
+export function whereOnBoard(editor: Editor, id: string, withPage = true): string {
   const b = editor.getShapePageBounds(id as TLShapeId);
   const page = editor.getAncestorPageId(id as TLShapeId);
   const pageName = page ? editor.getPage(page)?.name ?? "" : "";
-  if (!b) return pageName;
+  if (!b) return withPage ? pageName : "";
   const n = nearestNeighbour({ id, x: b.x, y: b.y, w: b.w, h: b.h }, pageFrames(editor, id));
-  return [n ? `${n.side} “${n.neighbour.name}”` : "on its own", pageName].filter(Boolean).join(" · ");
+  return [n ? `${n.side} “${n.neighbour.name}”` : "on its own", withPage ? pageName : ""].filter(Boolean).join(" · ");
 }
 
 export function Reveal({ editor, frameId, done }: { editor: Editor; frameId: string; done: () => void }) {

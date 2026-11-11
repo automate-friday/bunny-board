@@ -19,7 +19,7 @@ const fleetRemote=new RemoteAgents(m=>console.error(m),{enabled:true,bin:require
 const fleet=new RuntimeFleet(required('BUNNY_RUNTIME_STATE'),fleetRemote);
 const layer=RuntimeFilesLocalLive({fleet,stateDir:required('BUNNY_RUNTIME_STATE'),workspaceRoot:required('BUNNY_RUNTIME_WORKSPACES'),uploadRoot:required('BUNNY_RUNTIME_UPLOADS'),recordingsRoot:env.BUNNY_RUNTIME_RECORDINGS,mediaRoot:env.BUNNY_RUNTIME_MEDIA});
 const fleetSeed=z.object({host:z.string().min(1).max(200),key:z.string().min(1).max(200),agentId:z.string().min(1).max(200),messageId:z.string().min(1).max(200),requestedAt:z.number(),phase:z.literal('prepared')}).strict();
-const fleetInput=z.object({provider:z.string().min(1).max(200),title:z.string().max(1000),prompt:z.string().max(500000),modeId:z.string().max(200).optional(),labels:z.record(z.string(),z.string()).optional()}).strict();
+const fleetInput=z.object({provider:z.string().min(1).max(200),title:z.string().max(1000),prompt:z.string().max(500000),modeId:z.string().max(200).optional(),thinkingOptionId:z.string().max(80).optional(),labels:z.record(z.string(),z.string()).optional()}).strict();
 const request=z.discriminatedUnion('op',[
  z.object({op:z.literal('fleet-hosts')}).strict(),
  z.object({op:z.literal('fleet-create'),intent:fleetSeed,input:fleetInput}).strict(),

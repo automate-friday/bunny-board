@@ -64,12 +64,12 @@ export const USER_NOTES: Record<MidTurn, { summary: string; detail: string }> = 
     detail: "If the agent is working, your message is added to what it is doing; it is not stopped. Rarely (for example while it compacts its context) Paseo restarts the turn with your message instead, and the board cannot prevent that. To stop it on purpose, press Stop.",
   },
   "wait-for-turn-end": {
-    summary: "waits for the agent to finish its current turn",
-    detail: "This agent cannot take a message mid-turn without being interrupted, so the board holds yours until it is idle. Paseo has no safe way to queue a message, so if a new turn starts at the moment the board sends, that turn can still be interrupted. To interrupt on purpose, press Stop first; your message then goes out.",
+    summary: "waits for the current turn, unless the agent needs input",
+    detail: "This agent cannot take a message mid-turn without being interrupted, so the board holds yours until it is idle or waiting for your input. A new message can supersede an unanswered question. Paseo has no safe way to queue a message, so if a new turn starts at the moment the board sends, that turn can still be interrupted. To interrupt on purpose, press Stop first; your message then goes out.",
   },
   "wait-for-polled-idle": {
-    summary: "waits until the other Mac reports the agent idle",
-    detail: "This agent runs on another Mac. The board holds your message until that Mac reports the agent idle (checked every few seconds), so it normally will not interrupt. A turn that starts between the check and the send can still be interrupted. The board can only confirm that the other Mac accepted the message, not that the agent read it. To interrupt on purpose, stop the agent in Paseo on that Mac.",
+    summary: "waits until the other Mac reports idle or needs input",
+    detail: "This agent runs on another Mac. The board holds your message until that Mac reports the agent idle or waiting for your input (checked every few seconds), so it normally will not interrupt. A turn that starts between the check and the send can still be interrupted. The board can only confirm that the other Mac accepted the message, not that the agent read it. To interrupt on purpose, stop the agent in Paseo on that Mac.",
   },
 };
 
@@ -95,11 +95,15 @@ export function sendCapabilities(input: { host: string | null; provider?: string
 
 // Whether a message may go out now. busy: the agent has a turn in flight; null when its
 // status is not known (an unreachable or stale remote read): uncertain means hold.
-// A slash command is never steerable (Paseo replaces the turn), so it always waits.
+// A slash command is never steerable, so it waits unless the person is responding to input.
 export type SendDecision = { send: true; mode: MidTurn } | { send: false; mode: MidTurn; reason: "waiting-turn" | "waiting-status" };
-export function sendNow(caps: SendCapabilities, busy: boolean | null, text = ""): SendDecision {
+export function sendNow(caps: SendCapabilities, busy: boolean | null, text = "", respondingToInput = false): SendDecision {
   const slash = /^\s*\//.test(text);
   const mode: MidTurn = slash && caps.midTurn === "steer" ? "wait-for-turn-end" : caps.midTurn;
+  // A person may redirect an agent waiting for input. Waiting for its turn to end
+  // here deadlocks the reply behind the very question it can supersede. Only explicit
+  // prompts opt in; background deltas still obey the ordinary busy-turn policy.
+  if (respondingToInput && busy !== null) return { send: true, mode };
   if (mode === "steer") return { send: true, mode };
   if (busy === null) return { send: false, mode, reason: "waiting-status" };
   return busy ? { send: false, mode, reason: "waiting-turn" } : { send: true, mode };

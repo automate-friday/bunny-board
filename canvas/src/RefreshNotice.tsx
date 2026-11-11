@@ -1,6 +1,7 @@
 import { useVisualViewport } from "./visualViewport";
 import { useEffect, useRef, useState } from "react";
 import { COMPONENTS_VERSION } from "../../shared/components/transcript";
+import { launchSummary, recentLaunches } from "./launchTiming";
 declare const __CANVAS_BUILD_ID__: string;
 export function RefreshNotice({ embedded = false, onStatus }: { embedded?: boolean; onStatus?: (status: string) => void } = {}) {
   const viewport = useVisualViewport();
@@ -33,6 +34,7 @@ export function RefreshNotice({ embedded = false, onStatus }: { embedded?: boole
       <button type="button" data-testid="canvas-version-toggle" style={{ flexShrink: 0 }} onClick={() => setOpen(v => !v)} aria-expanded={open}>{mobile && !embedded ? "Version" : "Canvas version"}{newer ? mobile ? " · update" : " · update available" : error ? mobile ? " · error" : " · check failed" : ""}</button>
       {open ? <div data-testid="canvas-version-details" style={{ overflowWrap: "anywhere", minHeight: 0, overflowY: "auto" }}>
         <div>Loaded: {__CANVAS_BUILD_ID__} · component schema {COMPONENTS_VERSION}</div><div>Server: {serverId ?? "not checked"}</div>
+        {launchSummary(recentLaunches()[0]) ? <div data-testid="canvas-last-launch">Last launch on this device: {launchSummary(recentLaunches()[0])}</div> : null}
         {checkedAt ? <div>Last successful check: {new Date(checkedAt).toLocaleTimeString()}</div> : null}
         {error ? <div role="alert">Version check failed: {error}. Loaded canvas retained.</div> : null}
         <button type="button" data-testid="canvas-version-check" disabled={checking} onClick={() => runCheck.current()}>{checking ? "Checking…" : "Check for updates"}</button>

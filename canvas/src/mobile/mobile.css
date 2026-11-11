@@ -63,12 +63,18 @@ html.bunny-mobile .tlui-layout { display: none !important; }
   box-shadow: 0 2px 8px rgba(46,31,22,.06);
 }
 .bm-tile:active { background: light-dark(#EFE8FE, hsl(259 45% 21%)); }
-.bm-thumb { display: flex; align-items: center; justify-content: center; overflow: hidden; width: 100%; height: 96px; border-radius: 11px; background: light-dark(#f6efe4, var(--bunny-raised)); }
+.bm-thumb { position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden; width: 100%; height: 124px; border-radius: 11px; background: light-dark(#f6efe4, var(--bunny-raised)); }
 .bm-thumb[data-thumb=pending] { background: linear-gradient(90deg,light-dark(#f6efe4, var(--bunny-raised)) 0%,light-dark(#efe5d6, hsl(36 44% 21%)) 50%,light-dark(#f6efe4, var(--bunny-raised)) 100%); background-size: 200% 100%; animation: bm-shimmer 1.2s linear infinite; }
 @keyframes bm-shimmer { to { background-position: -200% 0; } }
-.bm-thumb img { max-width: 100%; max-height: 100%; display: block; }
+.bm-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: center top; display: block; }
+/* Readable words over the tile's image or sketch (LiveThumb Labels). */
+.bm-thumb-labels { position: absolute; inset: 0; pointer-events: none; }
+.bm-thumb-label { position: absolute; box-sizing: border-box; padding: 2px 3px 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; line-height: 1.15; font-family: Inter, system-ui, sans-serif; font-weight: 550; color: #2e1f16; word-break: normal; overflow-wrap: break-word; hyphens: auto; border-radius: 2px; }
+.bm-thumb-label[data-kind=text] { color: light-dark(#2e1f16, var(--bunny-ink)); background: light-dark(rgba(255,255,255,.85), color-mix(in srgb, var(--bunny-surface) 85%, transparent)); }
+.bm-thumb-label[data-kind=title] { color: light-dark(#2e1f16, var(--bunny-ink)); background: light-dark(rgba(246,239,228,.94), color-mix(in srgb, var(--bunny-raised) 94%, transparent)); font-weight: 650; -webkit-line-clamp: 1 !important; }
 .bm-thumb svg { width: 100%; height: 100%; display: block; }
 .bm-tile-name { display: flex; align-items: center; gap: 6px; font-weight: 650; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-top: 5px; }
+.bm-tile-name-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .bm-tile small, .bm-result-text small { font-size: 11.5px; color: var(--bm-muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .bm-tile-when[data-tone=preview], .bm-result-text small[data-tone=preview] { color: light-dark(#7b61ff, hsl(250 88% 74%)); }
 .bm-hit { color: var(--bm-ink) !important; background: light-dark(#FFF1C9, hsl(44 45% 21%)); border-radius: 6px; padding: 1px 6px; align-self: flex-start; max-width: 100%; box-sizing: border-box; }
@@ -149,7 +155,7 @@ html.bunny-mobile .tlui-layout { display: none !important; }
   .bm-top { padding-top: calc(env(safe-area-inset-top) + 6px); }
   .bm-home { padding-top: calc(env(safe-area-inset-top) + 50px); }
   .bm-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-  .bm-thumb { height: 80px; }
+  .bm-thumb { height: 104px; }
   .bm-dock { display: flex; align-items: center; gap: 10px; }
   .bm-dock .bm-grip small { display: none; }
   .bm-peek { flex: 1; min-width: 0; border-bottom: 0; border-right: 1px solid var(--bm-line); padding: 6px 10px 6px 4px; }

@@ -39,6 +39,12 @@ interface StorageInternals {
   tombstoneHistoryStartsAtClock: { get(): number };
   schema: { get(): unknown };
 }
+interface LogInternals {
+  documents: { has(id: string): boolean; get(id: string): { state: TLRecord; lastChangedClock: number } | undefined };
+  tombstones: { get(id: string): number | undefined };
+  documentClock: { get(): number };
+  tombstoneHistoryStartsAtClock: { get(): number };
+}
 // How many room change listeners are running (a listener's synchronous writes nest).
 let listenerDepth = 0;
 
@@ -67,14 +73,108 @@ export interface WriteOps {
   remove(id: string): void;
 }
 
+// Bounds the change log (see TrackedStorage). Mutable for tests.
+export const CHANGE_LOG = { max: 20000 };
+
+// InMemorySyncStorage plus a change log, so "what changed since clock N" costs the number
+// of changes instead of the size of the board.
+//
+// InMemorySyncStorage's transaction.getChangesSince(since) walks every document and every
+// tombstone. It runs at least twice per write: BoardRoom.committed() diffs each commit for
+// the change listeners, and TLSyncRoom.broadcastChanges() diffs every write it did not make
+// itself (agent API and other server writes) to broadcast them. On a 5,000-shape board
+// that is ~0.35 ms per scan, most of the server's cost of an agent write, and it grows with
+// the board. Every set/delete goes through a transaction, so the transaction wrapper logs
+// (clock, id) per write; getChangesSince(since) then visits only ids logged after `since`
+// and reports each with its current document or tombstone, the same entries the full walk
+// reports (a document whose lastChangedClock > since, a tombstone whose clock > since).
+// Out of the log's reach (older than its floor, or before tombstoneHistoryStartsAtClock: a
+// wipe) it falls back to tldraw's walk.
 class TrackedStorage extends InMemorySyncStorage<TLRecord> {
   onCommitted?: (txnId: string | undefined, sinceClock: number) => void;
+  // The @internal storage fields the log reads (also read by BoardRoom.readState).
+  private get internals(): LogInternals {
+    return this as unknown as LogInternals;
+  }
+  private logClock: number[] = [];
+  private logId: string[] = [];
+  // Every change with a clock above this is in the log.
+  private logFloor = this.getClock();
+  // Diagnostics: answers from the log vs. full walks.
+  logHits = 0;
+  logMisses = 0;
+
   // biome-ignore lint/suspicious/noExplicitAny: matching the base signature generically.
   override transaction(callback: any, opts?: any): any {
     const before = this.getClock();
-    const result = super.transaction(callback, opts);
+    // biome-ignore lint/suspicious/noExplicitAny: storage txn typing.
+    const result = super.transaction((txn: any) => callback(this.track(txn)), opts);
     if (result.documentClock > before) this.onCommitted?.(opts?.id, before);
     return result;
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: storage txn typing.
+  private track(txn: any): any {
+    const set = txn.set.bind(txn);
+    const del = txn.delete.bind(txn);
+    const scan = txn.getChangesSince.bind(txn);
+    txn.set = (id: string, record: TLRecord) => {
+      set(id, record);
+      this.log(id);
+    };
+    txn.delete = (id: string) => {
+      const had = this.internals.documents.has(id);
+      del(id);
+      if (had) this.log(id);
+    };
+    txn.getChangesSince = (since: number) => this.changesSince(since) ?? scan(since);
+    return txn;
+  }
+
+  private log(id: string): void {
+    this.logClock.push(this.internals.documentClock.get());
+    this.logId.push(id);
+    if (this.logClock.length > CHANGE_LOG.max) {
+      const drop = this.logClock.length - (CHANGE_LOG.max >> 1);
+      this.logFloor = Math.max(this.logFloor, this.logClock[drop - 1]);
+      this.logClock = this.logClock.slice(drop);
+      this.logId = this.logId.slice(drop);
+    }
+  }
+
+  // The log's answer to getChangesSince, or null to fall back to the full walk.
+  private changesSince(since: number): { diff: { puts: Record<string, TLRecord>; deletes: string[] }; wipeAll: false } | undefined | null {
+    const clock = this.internals.documentClock.get();
+    if (since === clock) return undefined;
+    if (since > clock || since < this.logFloor || since < this.internals.tombstoneHistoryStartsAtClock.get()) {
+      this.logMisses++;
+      return null;
+    }
+    this.logHits++;
+    // First log entry with a clock above `since` (the log is in clock order).
+    let lo = 0;
+    let hi = this.logClock.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.logClock[mid] > since) hi = mid;
+      else lo = mid + 1;
+    }
+    const puts: Record<string, TLRecord> = {};
+    const deletes: string[] = [];
+    const seen = new Set<string>();
+    for (let i = lo; i < this.logId.length; i++) {
+      const id = this.logId[i];
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const doc = this.internals.documents.get(id);
+      if (doc) {
+        if (doc.lastChangedClock > since) puts[id] = doc.state;
+        continue;
+      }
+      const tomb = this.internals.tombstones.get(id);
+      if (tomb !== undefined && tomb > since) deletes.push(id);
+    }
+    return { diff: { puts, deletes }, wipeAll: false };
   }
 }
 
@@ -209,8 +309,17 @@ export class BoardRoom {
             get: (id) => (txn.get(id) as Rec | undefined) ?? undefined,
             put: (input) => {
               // Drop undefined fields (tldraw meta must be JSON).
-              const record = JSON.parse(JSON.stringify(input)) as Rec;
+              const json = JSON.stringify(input);
+              const record = JSON.parse(json) as Rec;
               if (record.typeName === "document") record.meta = migrateWorkspaceMeta(record.meta);
+              // A put of exactly what is stored (same fields in the same order) is dropped:
+              // otherwise it still takes a new clock, a broadcast to every tab, the change
+              // listeners and a save. Counted as room.write.unchanged.
+              const stored = txn.get(record.id);
+              if (stored && record.typeName !== "document" && JSON.stringify(stored) === json) {
+                recordTiming("room.write.unchanged", 0, 1);
+                return;
+              }
               const type = (schema.types as Record<string, { validate(r: unknown, before?: unknown): unknown }>)[
                 record.typeName
               ];

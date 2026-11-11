@@ -55,9 +55,14 @@ function publish() {
 }
 
 // MobileShell: what is on screen.
+// The frame last opened in the phone shell on this board (App resets it per board); places.ts
+// remembers it, so a jump back from another board, or the next launch, returns to that frame.
+export const phoneOpenFrame = atom<string | null>("phone-open-frame", null);
+
 export function setPhoneView(mode: PhoneView["mode"], frameId: string | null, parent: (id: string) => string | undefined) {
   parentOf = parent;
   shown = { mode, frameId };
+  if (mode === "frame" && frameId) phoneOpenFrame.set(frameId);
   publish();
 }
 

@@ -149,6 +149,18 @@
   visibility: hidden;
   pointer-events: none;
 }
+/* A frame peek: the same window, centred over a dimmed board. */
+.bunny-peek-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 269;
+  background: rgba(46, 31, 22, 0.18);
+  pointer-events: all;
+  animation: bunny-portal-fade 120ms ease-out;
+}
+.bunny-portal-rift.peek {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--portal) 20%, transparent), 0 18px 48px rgba(46, 31, 22, 0.28);
+}
 .bunny-portal-rift.open {
   visibility: visible;
   pointer-events: all;
@@ -277,4 +289,41 @@
   border-radius: 10px;
   background: color-mix(in srgb, var(--portal) 10%, transparent);
   pointer-events: none;
+}
+
+/* A peek with its conversation: the frame on the left, the agent's thread on the right
+   (PortalRift.tsx sets --pane). The chip and tools centre over the frame part. */
+.bunny-portal-rift.peek .bunny-portal-inside {
+  right: var(--pane, 0px);
+}
+.bunny-peek-side {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--pane, 0px);
+  border-radius: 0 8px 8px 0;
+  overflow: hidden;
+  background: light-dark(#fff, var(--bunny-surface));
+}
+.bunny-portal-rift.peek .bunny-portal-tools {
+  left: calc((100% - var(--pane, 0px)) / 2);
+}
+/* The peek's chip holds more buttons (Pin, Chat): start it at the left edge so it is never
+   clipped, and let the title give way first. */
+.bunny-portal-rift.peek .bunny-portal-chip {
+  left: 12px;
+  transform: none;
+  max-width: calc(100% - 24px);
+}
+.bunny-portal-rift.peek .bunny-portal-chip .bunny-portal-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bunny-portal-rift.peek .bunny-portal-chip button[aria-pressed="true"] {
+  background: rgba(255, 255, 255, 0.28);
+}
+.bunny-peeking .tlui-style-panel__wrapper {
+  visibility: hidden;
 }

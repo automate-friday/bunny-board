@@ -2,7 +2,10 @@
    supplies its own theme palette for document shapes, frames and canvas. */
 :root { color-scheme: light; --bunny-surface: #fff; --bunny-raised: #f1f5f9; --bunny-line: #dce1e6; --bunny-ink: #17202e; --bunny-muted: #64748b; }
 :root[data-theme="dark"] { color-scheme: dark; --bunny-surface: #20242c; --bunny-raised: #2b303b; --bunny-line: #454d5c; --bunny-ink: #edf0f7; --bunny-muted: #aab4c5; }
-html, body, #root { background: var(--bunny-surface); color: var(--bunny-ink); }
+/* One UI font everywhere. Without this, tldraw chrome (menus, frame labels, toolbar) inherits the browser default serif. */
+:root { --bunny-font-ui: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+html, body, #root { background: var(--bunny-surface); color: var(--bunny-ink); font-family: var(--bunny-font-ui); -webkit-font-smoothing: antialiased; }
+.tl-container { --tl-font-sans: var(--bunny-font-ui); }
 input, textarea, select, button { color: inherit; }
 input, textarea, select { accent-color: #8875f6; }
 ::placeholder { color: var(--bunny-muted); opacity: .85; }

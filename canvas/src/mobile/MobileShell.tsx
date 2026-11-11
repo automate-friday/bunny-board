@@ -20,8 +20,9 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useKilledPageReport } from "./ShellErrorBoundary";
 import { type Box, createShapeId, type Editor, PageRecordType, type TLCameraOptions, type TLPageId, type TLShapeId, useValue } from "tldraw";
 import { goToBoard } from "../BoardMenu";
+import { openPlace, type Place, useRecentPlaces } from "../places";
 import { indexFrames, lastInteracted, readAgentSends, readRecents, recencyKey, rememberFrame, timeAgo, type PaletteFrame } from "../jumpPaletteModel";
-import { addPin, removePin, usePins } from "../framePanelDock";
+import { PIN_LIMIT, usePins } from "../pins";
 import { agentStore, STATUS_DOT, STATUS_TEXT, useAgentView } from "../agents";
 import { infoNow } from "../info";
 import { api } from "../api";
@@ -39,12 +40,16 @@ import { agentHost, agentLabel, fitInBand, unlocked, neighbour, recentConversati
 import { emptyHistory, forget, goTo, stepTarget, visit } from "./jumpHistory";
 import { JumpPills } from "./JumpPills";
 import { RenameSheet } from "./RenameSheet";
+import { askMove, MoveSheet, useAskedMove } from "./MoveSheet";
 import { fitAround, fitBoard, FocusLabel, FocusOutline, FullBoardButton } from "./BoardFocus";
 import { attachBoardSurface } from "./boardGestures";
 import { StopButton, useStopped } from "./StopButton";
 import { useModalOpen } from "./modalHold";
 import { askStartBeside, askStartSheet, emptyFrame, StartSheet, type StartPrefill, useAskedStartBeside, useAskedStartSheet } from "./StartSheet";
+import { openThreadAtHalf } from "./threadStop";
+import { lastStartPage } from "../startChoice";
 import { besideFrame } from "./placement";
+import { startBeside } from "./ThreadTools";
 import { leftoverDrafts } from "./drafts";
 import { deviceLock } from "../locks";
 import { askReveal, Reveal, useAskedReveal, whereOnBoard } from "./Reveal";
@@ -279,14 +284,31 @@ function useFrameCamera(editor: Editor, frameId: string | null, threadOpen = fal
         const v = editor.getViewportScreenBounds();
         if (b) editor.setCamera(fitInBand({ w: v.w, h: v.h }, b, { top: topNow() - v.y, bottom: r ? Math.max(0, v.y + v.h - r.top) : bottom }), { immediate: true });
       };
-      place();
-      const t1 = requestAnimationFrame(place);
-      const t2 = setTimeout(place, 150);
-      const t3 = setTimeout(place, 450);
+      // And whenever the thread sheet changes height (dragged to another stop, the keyboard,
+      // its open animation): a fit made while it covered nearly everything left the frame a
+      // speck at the top once it was lowered.
+      const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => requestAnimationFrame(place));
+      let watched: Element | null = null;
+      const watch = () => {
+        const el = document.querySelector('[data-testid="sidebar"][data-sheet="1"]');
+        if (!el || el === watched) return;
+        ro?.disconnect();
+        ro?.observe(el);
+        watched = el;
+      };
+      const placeAndWatch = () => {
+        place();
+        watch();
+      };
+      placeAndWatch();
+      const t1 = requestAnimationFrame(placeAndWatch);
+      const t2 = setTimeout(placeAndWatch, 150);
+      const t3 = setTimeout(placeAndWatch, 450);
       return () => {
         cancelAnimationFrame(t1);
         clearTimeout(t2);
         clearTimeout(t3);
+        ro?.disconnect();
       };
     }
     editor.setCameraOptions({
@@ -342,7 +364,8 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
   const [search, setSearch] = useState(false);
   const [boards, setBoards] = useState(false);
   const key = recencyKey(boardId, userId);
-  const [pins, setPins] = usePins(boardId);
+  // The board's pins (pins.ts): the same ones the desktop's frame tabs show.
+  const [pins, togglePin] = usePins(editor, boardId);
   const [touchedTick, setTouchedTick] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `touchedTick` re-reads storage.
   const activity = useActivity(boardId, mode === "tiles");
@@ -414,7 +437,12 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
   const [order, setOrder] = useState<string[]>([]);
   useEffect(() => {
     if (mode !== "frame") setOrder([]);
-    else setOrder((o) => (o.length ? o : recentConversations(frames, touched).map((f) => f.id)));
+    // Pinned frames first, so a pin made on the desktop is one tap away here.
+    else setOrder((o) => {
+      if (o.length) return o;
+      const pinned = pins.filter((id) => frames.some((f) => f.id === id));
+      return [...pinned, ...recentConversations(frames, touched).map((f) => f.id).filter((id) => !pinned.includes(id))];
+    });
     // biome-ignore lint/correctness/useExhaustiveDependencies: frozen per visit on purpose.
   }, [mode]);
 
@@ -599,7 +627,11 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
       setStartFor({ id: current.id, owned: false, beside: true });
       return;
     }
-    const page = editor.getCurrentPageId();
+    // The page you are on; from the tiles showing every page (none in view), the page last
+    // started on from this device.
+    const remembered = lastStartPage(boardId) as TLPageId | null;
+    const page = mode === "tiles" && !tilePage && remembered && editor.getPage(remembered) ? remembered : editor.getCurrentPageId();
+    if (page !== editor.getCurrentPageId()) editor.setCurrentPage(page);
     const onPage = frames.filter((f) => f.pageId === page);
     // An empty "New agent" frame already on the page (an earlier start that never went): start
     // there rather than drawing another one beside it.
@@ -702,8 +734,21 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
   const revealDone = () => {
     const r = reveal;
     setReveal(null);
-    if (r?.thenThread) openThread(r.id);
+    // Half height, so the new frame stays in view above its thread.
+    if (r?.thenThread) {
+      openThreadAtHalf(r.id);
+      openThread(r.id);
+    }
   };
+  // ⋯ → Move frame… (thread menu): the Move sheet for that frame.
+  const moveAsk = useAskedMove();
+  const [movingSheet, setMovingSheet] = useState<string | null>(null);
+  useEffect(() => {
+    if (!moveAsk) return;
+    askMove(null);
+    if (frames.some((f) => f.id === moveAsk)) setMovingSheet(moveAsk);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: one ask, one sheet.
+  }, [moveAsk]);
   // ⋯ → Show on board (thread menu, frame sheet): the same zoom-out for the open frame.
   const revealAsk = useAskedReveal();
   useEffect(() => {
@@ -720,7 +765,7 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
     showOnBoard(revealAsk);
     // biome-ignore lint/correctness/useExhaustiveDependencies: one ask, one view.
   }, [revealAsk]);
-  // "+ Agent here" / "Start agent about this" in a thread: a new frame beside that thread's
+  // "+ New" (top bar) / "Start agent about this" in a thread: a new frame beside that thread's
   // frame (same page, free space), under the start sheet prefilled like that agent. Its
   // history entry follows the source's, so the back pill returns there.
   const besideAsk = useAskedStartBeside();
@@ -792,7 +837,6 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
     return () => document.documentElement.classList.remove("bm-covered", "bm-canvas-hidden");
   }, [threadOpen, search, mode, startFor, renaming, reveal]);
 
-  const togglePin = (id: string) => setPins(pins.includes(id) ? removePin(pins, id) : addPin(pins, id));
   // A deleted or archived frame leaves frame mode.
   useEffect(() => {
     if (mode === "frame" && frameId && !frames.some((f) => f.id === frameId)) setMode("tiles");
@@ -807,7 +851,9 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
       {waiting.length} need{waiting.length === 1 ? "s" : ""} you →
     </button>
   ) : null;
-  const boardName = boardId === "main" ? "Bunny board" : boardId;
+  const boardName = boardLabel(boardId);
+  const places = useRecentPlaces();
+  const elsewhere = otherBoardPlace(places, boardId, Date.now());
   const pageLabel = pages.length > 1 ? (tilePage ? pages.find((p) => p.id === tilePage)?.name ?? "" : "All pages") : "";
 
   return (
@@ -821,6 +867,19 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
             <StatusDot status={current.rawStatus} />
             <b>{current.name}</b>
           </span>
+          {/* A new agent beside this frame, like this one (same model, same machine). */}
+          <button type="button" className="bm-newagent" data-testid="mobile-new-agent" aria-label="New agent beside this frame" onClick={() => {
+            // biome-ignore lint/suspicious/noExplicitAny: meta JSON.
+            const paseo = ((editor.getShape(current.id as TLShapeId)?.meta as any)?.paseo ?? {}) as Record<string, unknown>;
+            void startBeside({ frameId: current.id, agentId: typeof paseo.agentId === "string" ? paseo.agentId : undefined, binding: paseo, frameName: current.name, boardId });
+          }}>
+            + New
+          </button>
+          <button type="button" className="bm-newagent bm-pinframe" data-testid="mobile-pin-frame" aria-pressed={pins.includes(current.id)} disabled={!pins.includes(current.id) && pins.length >= PIN_LIMIT} aria-label={pins.includes(current.id) ? `Unpin ${current.name}` : pins.length >= PIN_LIMIT ? `Pins are full (${PIN_LIMIT})` : `Pin ${current.name}`} onClick={() => togglePin(current.id)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill={pins.includes(current.id) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9 4h6l-1 6 3 3H7l3-3-1-6zM12 13v7" />
+            </svg>
+          </button>
           <FullBoardButton onClick={fullBoard} />
           {/* Portrait: a row under the bar; landscape: in the bar itself, in the title's place
               (the open frame's chip is highlighted), so the frame keeps the screen's height. */}
@@ -838,6 +897,11 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
           {mode === "board" && boardFocus && frames.some((f) => f.id === boardFocus) ? (
             <button type="button" className="bm-backframe" data-testid="mobile-board-back" onClick={() => openFrame(boardFocus)}>
               ← {frames.find((f) => f.id === boardFocus)?.name}
+            </button>
+          ) : null}
+          {elsewhere ? (
+            <button type="button" className="bm-backframe" data-testid="mobile-place-back" onClick={() => openPlace(elsewhere.board, elsewhere.frame)} aria-label={`Back to ${placeLabel(elsewhere)}`}>
+              ← {placeLabel(elsewhere)}
             </button>
           ) : null}
           {pill}
@@ -859,7 +923,7 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
       {reveal ? <Reveal key={reveal.id} editor={editor} frameId={reveal.id} done={revealDone} /> : null}
       <TellBunny editor={editor} boardId={boardId} frames={frames} touched={touched} current={mode === "frame" ? frameId : null} openFrame={(id) => openFrame(id, true)} />
 
-      {mode !== "tiles" && !threadOpen && !search && !startFor && !renaming && !reveal ? (
+      {mode !== "tiles" && !threadOpen && !search && !startFor && !renaming && !movingSheet && !reveal ? (
         <div className="bm-dock" data-mobile-ui data-testid="mobile-bar">
           {mode === "board" ? (
             <div className="bm-grip" {...boardPull.handlers} style={{ ...boardPull.handlers.style, transform: boardPull.offset ? `translateY(${-boardPull.offset}px)` : undefined }}>
@@ -896,8 +960,9 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
       <Immersive editor={editor} active={mode !== "tiles" && !modalOpen} />
       {mode !== "tiles" && !search ? <MobileEdit editor={editor} frameId={mode === "frame" ? frameId : null} board={mode === "board"} threadOpen={threadOpen} /> : null}
 
+      {movingSheet && frames.some((f) => f.id === movingSheet) ? <MoveSheet editor={editor} frameId={movingSheet} close={() => setMovingSheet(null)} moveOnBoard={() => { if (frameId !== movingSheet) { setFrameId(movingSheet); setHist((h) => visit(h, movingSheet)); } moveOnBoard(movingSheet); }} /> : null}
       {renaming && frames.some((f) => f.id === renaming) ? <RenameSheet editor={editor} frameId={renaming} close={() => setRenaming(null)} moveOnBoard={() => moveOnBoard(renaming)} /> : null}
-      {startFor ? <StartSheet key={startFor.id} editor={editor} boardId={boardId} frameId={startFor.id} prefill={startFor.prefill} beside={startFor.beside ? { name: frames.find((f) => f.id === startFor.id)?.name ?? "this frame", make: () => frameBeside(startFor.id) } : undefined} where={startFor.owned ? `New frame ${whereOnBoard(editor, startFor.id)}` : `In “${frames.find((f) => f.id === startFor.id)?.name ?? "this frame"}”`} onCancel={cancelStart} onStarted={started} /> : null}
+      {startFor ? <StartSheet key={startFor.id} editor={editor} boardId={boardId} frameId={startFor.id} prefill={startFor.prefill} beside={startFor.beside ? { name: frames.find((f) => f.id === startFor.id)?.name ?? "this frame", make: () => frameBeside(startFor.id) } : undefined} where={startFor.owned ? `New frame ${whereOnBoard(editor, startFor.id)}` : `In “${frames.find((f) => f.id === startFor.id)?.name ?? "this frame"}”`} movable={startFor.owned} onCancel={cancelStart} onStarted={started} /> : null}
       {newMenu ? <NewMenu close={() => setNewMenu(false)} pick={pickNew} /> : null}
       {creating ? <CreateSheet kind={creating} where={creating === "frame" ? `On ${pages.find((p) => p.id === (tilePage ?? editorPage))?.name ?? "this page"}` : "A separate space on this board"} create={creating === "page" ? createPage : createFrame} close={() => setCreating(null)} /> : null}
       {search ? <SearchSheet editor={editor} frames={frames} pins={pins} touched={touched} now={now} close={() => setSearch(false)} openFrame={openFrame} togglePin={togglePin} /> : null}
@@ -905,8 +970,24 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
   );
 }
 
+export function boardLabel(board: string): string {
+  return board === "main" ? "Bunny board" : board;
+}
+
+function placeLabel(p: Place): string {
+  return p.title ? `${boardLabel(p.board)} · ${p.title}` : boardLabel(p.board);
+}
+
+// The last place on another board, if it was within a day: the top bar's jump back to it.
+export function otherBoardPlace(places: readonly Place[], boardId: string, now: number): Place | null {
+  const p = places.find((x) => x.board !== boardId);
+  return p && now - p.at < 24 * 3600_000 ? p : null;
+}
+
 function BoardSwitcher({ boardId, close, children }: { boardId: string; close: () => void; children?: React.ReactNode }) {
   const [list, setList] = useState<{ id: string; frames: number; boundFrames: number }[] | null>(null);
+  // Frames only: a board's own entry is already in the list under it.
+  const recent = useRecentPlaces().filter((p) => p.board !== boardId && p.frame).slice(0, 4);
   useEffect(() => {
     api<{ boards: { id: string; frames: number; boundFrames: number }[] }>("/api/ui/boards").then((r) => setList(r.boards)).catch(() => setList([]));
   }, []);
@@ -915,10 +996,22 @@ function BoardSwitcher({ boardId, close, children }: { boardId: string; close: (
       <div className="bm-scrim bm-scrim-clear" data-mobile-ui onPointerDown={close} />
       <div className="bm-boards" data-mobile-ui data-testid="mobile-boards" role="menu">
         <ThemePicker />
+        {/* Frames this phone had open on other boards: one tap back to that board and frame. */}
+        {recent.length ? (
+          <div className="bm-recent" data-testid="mobile-recent-places">
+            <small>Recent</small>
+            {recent.map((p) => (
+              <button key={p.board} type="button" role="menuitem" data-testid="mobile-recent-place" onClick={() => { close(); openPlace(p.board, p.frame); }}>
+                <b>{p.title ?? boardLabel(p.board)}</b>
+                <small>{p.title ? boardLabel(p.board) : "board"}</small>
+              </button>
+            ))}
+          </div>
+        ) : null}
         {list === null ? <p className="bm-empty">Loading boards…</p> : null}
         {(list ?? []).map((b) => (
           <Fragment key={b.id}>
-            <button type="button" role="menuitem" aria-current={b.id === boardId} onClick={() => (b.id === boardId ? close() : goToBoard(b.id))}>
+            <button type="button" role="menuitem" aria-current={b.id === boardId} onClick={() => { close(); if (b.id !== boardId) goToBoard(b.id); }}>
               <b>{b.id === "main" ? "Bunny board" : b.id}</b>
               <small>
                 {b.frames} frame{b.frames === 1 ? "" : "s"} · {b.boundFrames} agent{b.boundFrames === 1 ? "" : "s"}
@@ -963,7 +1056,7 @@ function TilesHome({ editor, frames, pins, touched, now, openFrame, openSearch, 
         {pinned.length ? (
           <section>
             <h3>
-              Pinned{pinnedFallback ? <span className="bm-h3-note"> · nothing pinned yet, most recent</span> : null}
+              Pinned{pinnedFallback ? <span className="bm-h3-note"> · none yet, showing latest</span> : null}
             </h3>
             <div className="bm-grid" data-testid="mobile-pinned">
               {pinned.map((f) => (
@@ -1043,7 +1136,7 @@ function Tile({ editor, frame, touched, now, open }: { editor: Editor; frame: Fr
       <LiveThumb editor={editor} id={frame.id} />
       <span className="bm-tile-name">
         <StatusDot status={frame.rawStatus} title={frame.status} />
-        {frame.name}
+        <span className="bm-tile-name-text">{frame.name}</span>
       </span>
       <small>{agentLine(frame, harness)}</small>
       <YouLine last={summary?.lastUserMessage} />
@@ -1127,7 +1220,7 @@ function SearchSheet({ editor, frames, pins, touched, now, close, openFrame, tog
           {results.length ? (
             <ul className="bm-results" data-testid="mobile-search-results">
               {(results as Frame[]).slice(0, 30).map((f) => (
-                <ResultRow key={f.id} editor={editor} frame={f} hit={hitOf.get(f.id)} pinned={pins.includes(f.id)} report={reports.get(f.id)} when={phoneAgo(touched.get(f.id), now)} openFrame={openFrame} togglePin={togglePin} />
+                <ResultRow key={f.id} editor={editor} frame={f} hit={hitOf.get(f.id)} pinned={pins.includes(f.id)} pinsFull={pins.length >= PIN_LIMIT} report={reports.get(f.id)} when={phoneAgo(touched.get(f.id), now)} openFrame={openFrame} togglePin={togglePin} />
               ))}
             </ul>
           ) : (
@@ -1139,7 +1232,7 @@ function SearchSheet({ editor, frames, pins, touched, now, close, openFrame, tog
   );
 }
 
-function ResultRow({ editor, frame, hit, pinned, report, when, openFrame, togglePin }: { editor: Editor; frame: Frame; hit?: SearchHit; pinned: boolean; report?: string; when: string; openFrame: (id: string, thread?: boolean) => void; togglePin: (id: string) => void }) {
+function ResultRow({ editor, frame, hit, pinned, pinsFull, report, when, openFrame, togglePin }: { editor: Editor; frame: Frame; hit?: SearchHit; pinned: boolean; pinsFull: boolean; report?: string; when: string; openFrame: (id: string, thread?: boolean) => void; togglePin: (id: string) => void }) {
   const summary = useAgentSummary(frame.agentId, !!frame.agentId);
   const harness = harnessOf(frame.agentId, summary);
   return (
@@ -1172,8 +1265,8 @@ function ResultRow({ editor, frame, hit, pinned, report, when, openFrame, toggle
             Follow agent
           </button>
         ) : null}
-        <button type="button" data-testid="mobile-pin" aria-pressed={pinned} onClick={() => togglePin(frame.id)}>
-          {pinned ? "Unpin" : "Pin"}
+        <button type="button" data-testid="mobile-pin" aria-pressed={pinned} disabled={!pinned && pinsFull} title={!pinned && pinsFull ? `Pins are full (${PIN_LIMIT}): unpin one first` : undefined} onClick={() => togglePin(frame.id)}>
+          {pinned ? "Unpin" : pinsFull ? "Pins full" : "Pin"}
         </button>
         {report ? (
           <a href={report} target="_blank" rel="noopener noreferrer" data-testid="mobile-report">

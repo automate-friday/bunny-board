@@ -1,24 +1,38 @@
 import { useState } from 'react';
-import { type Editor, useValue } from 'tldraw';
+import { type Editor, type TLFrameShape, useValue } from 'tldraw';
 import { api } from './api';
 import { newMessageId } from './frameChatDelivery';
 import { boardLocks } from './locks';
 import { surface, B } from './bunnyTheme';
+import { pageFrames } from './pageFrames';
+
+type Paseo={agentId?:string;compressionOffer?:{w:number;h:number};compression?:{messageId:string;status:string}};
+const NO_OFFERS:TLFrameShape[]=[];
+const NO_CHIPS:{id:string;w:number;h:number;x:number;y:number;pending:boolean;messageId?:string}[]=[];
 
 export function FrameCompression({editor,boardId}:{editor:Editor;boardId:string}) {
-  const frames=useValue('compression-chips',()=> {
+  // Frames with an offer, from the shared frame list (no page scan); only when there are
+  // any does the chip list read the camera, so pan/zoom costs nothing on a board without one.
+  const offered=useValue('compression-offers',()=> {
     const locks=boardLocks(editor).get();
-    if (locks.layout || locks.agentsPaused) return [];
-    return editor.getCurrentPageShapes().flatMap(f=> {
-      if (f.type!=='frame') return [];
-      const p=f.meta.paseo as {agentId?:string;compressionOffer?:{w:number;h:number};compression?:{messageId:string;status:string}}|undefined;
-      if (!p?.agentId || (!p.compressionOffer && p.compression?.status!=='pending')) return [];
-      const bounds=editor.getShapePageBounds(f.id);
-      if (!bounds?.collides(editor.getViewportPageBounds())) return [];
-      const point=editor.pageToViewport({x:bounds.minX+12/editor.getZoomLevel(),y:bounds.minY+10/editor.getZoomLevel()});
-      return [{id:f.id,w:f.props.w,h:f.props.h,...point,pending:p.compression?.status==='pending',messageId:p.compression?.messageId}];
+    if (locks.layout || locks.agentsPaused) return NO_OFFERS;
+    const out=pageFrames(editor).get().filter(f=> {
+      const p=f.meta.paseo as Paseo|undefined;
+      return !!p?.agentId && (!!p.compressionOffer || p.compression?.status==='pending');
     });
+    return out.length?out:NO_OFFERS;
   },[editor]);
+  const frames=useValue('compression-chips',()=> {
+    if (!offered.length) return NO_CHIPS;
+    const vp=editor.getViewportPageBounds(), z=editor.getZoomLevel();
+    return offered.flatMap(f=> {
+      const p=f.meta.paseo as Paseo|undefined;
+      const bounds=editor.getShapePageBounds(f.id);
+      if (!bounds?.collides(vp)) return [];
+      const point=editor.pageToViewport({x:bounds.minX+12/z,y:bounds.minY+10/z});
+      return [{id:f.id,w:f.props.w,h:f.props.h,...point,pending:p?.compression?.status==='pending',messageId:p?.compression?.messageId}];
+    });
+  },[editor,offered]);
   const [busy,setBusy]=useState<string|null>(null);
   const [errors,setErrors]=useState<Record<string,string>>({});
   return <>{frames.map(f=><div key={f.id} data-testid="compression-chip" data-frame={f.id}

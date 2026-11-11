@@ -21,6 +21,9 @@ type Listener = (snap: TranscriptSnapshot) => void;
 interface Entry {
   agentId: string;
   epoch:string|null;seq:number;
+  // The assistant or reasoning message still streaming at the timeline tail (raw, untruncated),
+  // so a pushed chunk can be appended the way Paseo's projection merges them.
+  stream:StreamTail|null;
   retryTimer:ReturnType<typeof setTimeout>|null;
   snap: TranscriptSnapshot | null;
   sig: string;
@@ -42,6 +45,10 @@ interface Entry {
   fetches: number;
   broadcasts: number;
 }
+
+interface StreamTail {type:'assistant_message'|'reasoning';seqStart:number;seqEnd:number;turnId?:string;messageId?:string;text:string;timestamp:string}
+// biome-ignore lint/suspicious/noExplicitAny: timeline entries are wide unions.
+const streamTail=(entry:any):StreamTail|null=>(entry?.item?.type==='assistant_message'||entry?.item?.type==='reasoning')?{type:entry.item.type,seqStart:entry.seqStart,seqEnd:entry.seqEnd,...(entry.turnId?{turnId:entry.turnId}:{}),...(typeof entry.item.messageId==='string'?{messageId:entry.item.messageId}:{}),text:String(entry.item.text??''),timestamp:entry.timestamp}:null;
 
 const ROWS = 60;
 const DEBOUNCE_MS = 350;
@@ -85,7 +92,7 @@ export class TranscriptHub {
         const oldest=[...this.entries.values()].filter(x=>!x.listeners.size&&!x.fetching).sort((a,b)=>a.lastUsed-b.lastUsed)[0];
         if(oldest){if(oldest.timer)clearTimeout(oldest.timer);if(oldest.releaseTimer)clearTimeout(oldest.releaseTimer);this.release(oldest);this.entries.delete(oldest.agentId);}
       }
-      e = { agentId, epoch:null,seq:-1,retryTimer:null,snap: null, sig: "", listeners: new Set(), unsub: null, subscribing: false, subscriptionReady: false, releaseTimer: null, timer: null, fetching: null, dirty: false, lastFetch: 0, lastRefresh: 0, lastUsed: Date.now(), warmUntil: 0, events: 0, statusVersion: 0, subscribes: 0, fetches: 0, broadcasts: 0 };
+      e = { agentId, epoch:null,seq:-1,stream:null,retryTimer:null,snap: null, sig: "", listeners: new Set(), unsub: null, subscribing: false, subscriptionReady: false, releaseTimer: null, timer: null, fetching: null, dirty: false, lastFetch: 0, lastRefresh: 0, lastUsed: Date.now(), warmUntil: 0, events: 0, statusVersion: 0, subscribes: 0, fetches: 0, broadcasts: 0 };
       this.entries.set(agentId, e);
     }
     return e;
@@ -347,7 +354,14 @@ export class TranscriptHub {
     if(!e.snap||!e.epoch||m.epoch!==e.epoch||!Number.isSafeInteger(m.seq))return false;
     if(m.seq! <= e.seq)return true;
     if(m.seq!==e.seq+1)return false;
-    const row=timelineRows({epoch:e.epoch,entries:[{seqStart:m.seq,seqEnd:m.seq,timestamp:m.timestamp??new Date().toISOString(),item:m.event.item,turnId:m.event.turnId}]} as Parameters<typeof timelineRows>[0],e.agentId)[0];
+    // Text arrives as deltas: match Paseo's assistant/reasoning projection.
+    // Only contiguous chunks of the same type and turn extend the streaming row.
+    let entry={seqStart:m.seq!,seqEnd:m.seq!,timestamp:m.timestamp??new Date().toISOString(),item:m.event.item,turnId:m.event.turnId};
+    const item=m.event.item as {type?:string;text?:unknown;messageId?:unknown}|undefined,prev=e.stream;
+    if((item?.type==='assistant_message'||item?.type==='reasoning')&&prev&&prev.type===item.type&&prev.seqEnd+1===m.seq&&prev.turnId===m.event.turnId&&(item.type==='reasoning'||item.messageId===undefined||item.messageId===prev.messageId))
+      entry={...entry,seqStart:prev.seqStart,item:{...item,text:`${prev.text}${String(item.text??'')}`,...(prev.messageId?{messageId:prev.messageId}:{})}};
+    e.stream=streamTail(entry);
+    const row=timelineRows({epoch:e.epoch,entries:[entry]} as Parameters<typeof timelineRows>[0],e.agentId)[0];
     e.seq=m.seq!;e.lastFetch=Date.now();
     if(!row)return true;
     const rows=[...e.snap.rows];const key=row.item?.key;
@@ -422,7 +436,7 @@ export class TranscriptHub {
             if(!valid())return;
             if(page.error)throw Error(page.error);
             if(typeof page.epoch==='string'){const seq=page.endCursor?.seq??page.entries.at(-1)?.seqEnd??-1;if(page.epoch===e.epoch&&seq<e.seq)return;e.epoch=page.epoch;e.seq=seq;}
-            renderedSeq=e.seq;tailError=undefined;snap={...snap,rows:timelineRows(page,e.agentId)};
+            renderedSeq=e.seq;tailError=undefined;snap={...snap,rows:timelineRows(page,e.agentId)};e.stream=streamTail(page.entries.at(-1));
             const current=ref.current?.();if(current)snap={...snap,...usageOf(current)};
             e.lastFetch=Date.now();publish();
           });

@@ -15,6 +15,11 @@
 // burst: that card every 3 s for 5 minutes, then back to the minute. A burst reads the session
 // on every pass and GitHub at most every 30 s.
 //
+// GitHub budget: the operator's gh login (5000 requests/hour) is shared with deployment.
+// board-env previews copy production's cards, so they skip GitHub (BUNNY_CLOUD_GITHUB=1
+// opts in); a poll pass fetches the recent-PR list once per repo for all its cards; a rate-limit
+// answer pauses every GitHub call for 15 minutes instead of retrying each card each minute.
+//
 // Every lookup has a timeout, and one card's failure never stops the others.
 
 import { execFile } from "node:child_process";
@@ -197,6 +202,9 @@ export class CloudSessions {
   private bursts = new Map<string, number>();
   private inFlight = new Set<string>();
   private githubAt = new Map<string, number>();
+  // Recent-PR lists shared by the cards of one poll pass (null outside a pass).
+  private pass: Map<string, Promise<unknown>> | null = null;
+  private githubPausedUntil = 0;
   // "Claude Code activity" widgets, per session id (server/widgets/claude-activity.ts).
   private activity = new Map<string, Set<ActivityListener>>();
   private activityInFlight = new Set<string>();
@@ -209,7 +217,32 @@ export class CloudSessions {
     private onActiveChange: (boardId: string, frameId: string) => void = () => {},
     private pollMs = Number(process.env.BUNNY_CLOUD_POLL_MS) || 60_000,
     private burstPollMs = Number(process.env.BUNNY_CLOUD_BURST_MS) || 3_000,
+    private githubEnabled = !process.env.BOARD_ENV || process.env.BUNNY_CLOUD_GITHUB === "1",
   ) {}
+
+  // Every GitHub read goes through here (see "GitHub budget" above).
+  private async gh(args: string[], now = Date.now()): Promise<unknown> {
+    if (now < this.githubPausedUntil) throw new Error(`GitHub paused after a rate limit until ${new Date(this.githubPausedUntil).toISOString()}`);
+    try {
+      return await this.runner.gh(args);
+    } catch (e) {
+      // ponytail: fixed 15 min pause; read the reset time from `gh api rate_limit` if it matters.
+      if (/rate limit/i.test((e as Error).message)) {
+        this.githubPausedUntil = now + 15 * 60_000;
+        this.log("cloud sessions: GitHub rate limited; pausing GitHub reads for 15 min");
+      }
+      throw e;
+    }
+  }
+
+  private recent(repo: string): Promise<unknown> {
+    const hit = this.pass?.get(repo);
+    if (hit) return hit;
+    const pulls = this.gh(["-X", "GET", `repos/${repo}/pulls`, "-f", "state=all", "-f", "sort=updated", "-f", "direction=desc", "-f", "per_page=30"]);
+    pulls.catch(() => {});
+    this.pass?.set(repo, pulls);
+    return pulls;
+  }
 
   codexDoctor(): Promise<CodexReadiness> {
     if (!this.readiness || this.readiness.expires <= Date.now()) {
@@ -373,6 +406,7 @@ export class CloudSessions {
   async tick(): Promise<void> {
     if (this.busy) return;
     this.busy = true;
+    this.pass = new Map();
     try {
       for (const room of this.host.all()) {
         for (const r of [...room.records.values()]) {
@@ -382,6 +416,7 @@ export class CloudSessions {
       for (const session of [...this.activity.keys()]) if (!this.cardFor(session)) await this.readActivity(session);
     } finally {
       this.busy = false;
+      this.pass = null;
       this.recount();
     }
   }
@@ -455,7 +490,7 @@ export class CloudSessions {
     // 2. GitHub: the newest linked PR and its checks (skipped on most burst passes).
     let prState: PrState = p.prState;
     let githubError = "";
-    if (opts.github !== false) {
+    if (opts.github !== false && this.githubEnabled) {
       let pull: Pull | null = null;
       try {
         pull = await this.findPull(p);
@@ -509,20 +544,25 @@ export class CloudSessions {
   // head is the session's branch. Falls back to the PR already on the card.
   private async findPull(p: CloudSessionProps): Promise<Pull | null> {
     const repo = p.repo;
-    const recent = (await this.runner.gh(["-X", "GET", `repos/${repo}/pulls`, "-f", "state=all", "-f", "sort=updated", "-f", "direction=desc", "-f", "per_page=30"])) as Pull[];
+    const recent = (await this.recent(repo)) as Pull[];
     const linked = (Array.isArray(recent) ? recent : []).filter((pr) => (typeof pr.body === "string" && pr.body.includes(p.session)) || (!!p.branch && pr.head?.ref === p.branch));
+    // A merged or closed PR cannot change: only a newer linked PR in the shared list matters.
+    if (p.pr && (p.prState === "merged" || p.prState === "closed")) {
+      const newer = linked.reduce<Pull | null>((a, b) => (b.number > p.pr && (!a || b.number > a.number) ? b : a), null);
+      return newer;
+    }
     if (p.branch) {
       const owner = repo.split("/")[0];
-      const byHead = (await this.runner.gh(["-X", "GET", `repos/${repo}/pulls`, "-f", "state=all", "-f", `head=${owner}:${p.branch}`, "-f", "per_page=5"])) as Pull[];
+      const byHead = (await this.gh(["-X", "GET", `repos/${repo}/pulls`, "-f", "state=all", "-f", `head=${owner}:${p.branch}`, "-f", "per_page=5"])) as Pull[];
       if (Array.isArray(byHead)) linked.push(...byHead);
     }
     const newest = linked.reduce<Pull | null>((a, b) => (!a || b.number > a.number ? b : a), null);
     if (newest && newest.number >= p.pr) return newest;
-    return p.pr ? ((await this.runner.gh([`repos/${repo}/pulls/${p.pr}`])) as Pull) : null;
+    return p.pr ? ((await this.gh([`repos/${repo}/pulls/${p.pr}`])) as Pull) : null;
   }
 
   private async checks(repo: string, sha: string): Promise<Pick<CloudSessionProps, "checksPass" | "checksFail" | "checksPending">> {
-    const res = (await this.runner.gh(["-X", "GET", `repos/${repo}/commits/${sha}/check-runs`, "-f", "per_page=100"])) as { check_runs?: Array<{ status?: string; conclusion?: string | null }> };
+    const res = (await this.gh(["-X", "GET", `repos/${repo}/commits/${sha}/check-runs`, "-f", "per_page=100"])) as { check_runs?: Array<{ status?: string; conclusion?: string | null }> };
     let pass = 0, fail = 0, pending = 0;
     for (const c of res?.check_runs ?? []) {
       if (c.status !== "completed") pending++;

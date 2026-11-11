@@ -7,7 +7,7 @@
 // and every HTML report opened inline (an iframe: a whole document each). At 0.1x none of it is
 // legible.
 //
-// So on the phone, below LOW_ZOOM (tldraw's debounced "efficient" zoom, so not mid-pinch),
+// So on the phone, below LOW_ZOOM (LARGE_LOW_ZOOM on a board of more than LARGE_BOARD_SHAPES shapes) (tldraw's debounced "efficient" zoom, so not mid-pinch),
 // and also whenever it is culled (off screen: tldraw hides it, but its DOM stays), a shape renders a
 // placeholder instead: its outline in its colour and, for cards, a title readable at that zoom.
 // No subscription, timer or iframe is mounted. Above FULL_ZOOM the real shape comes back
@@ -19,7 +19,7 @@ import { HTMLContainer, type TLShape, useEditor, useSvgExportContext, useValue }
 import { phonePlaceholder } from "./lodRule";
 import { phoneGeometryOn } from "./phoneGeometry";
 
-export { FULL_ZOOM, LOW_ZOOM } from "./lodRule";
+export { FULL_ZOOM, LARGE_BOARD_SHAPES, LOW_ZOOM } from "./lodRule";
 
 // Whether this shape shows its placeholder now. `heavy`: also while it is culled.
 export function usePhonePlaceholder(id: string, heavy: boolean): boolean {
@@ -31,7 +31,7 @@ export function usePhonePlaceholder(id: string, heavy: boolean): boolean {
     "phone-lod",
     () => {
       if (!on) return false;
-      const next = phonePlaceholder(low.current, editor.getEfficientZoomLevel(), editor.getCulledShapes().has(id as TLShape["id"]), heavy);
+      const next = phonePlaceholder(low.current, editor.getEfficientZoomLevel(), editor.getCulledShapes().has(id as TLShape["id"]), heavy, editor.getCurrentPageShapeIds().size);
       low.current = next.low;
       return next.placeholder;
     },

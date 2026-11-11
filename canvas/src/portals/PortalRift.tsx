@@ -19,10 +19,17 @@ import { installEditKeyBuffer } from "../editKeyBuffer";
 import { portalOf } from "../../../shared/portal";
 import { installLayoutGuard } from "../locks";
 import { livePortal, PortalIcon, portalBounds, portalColor, portalLabel } from "./Portals";
+import { B } from "../bunnyTheme";
 
 const stop = (e: React.SyntheticEvent) => e.stopPropagation();
 const RIFT_W = 580;
 const RIFT_H = 380;
+// A frame peek (a frame tab clicked, FrameTabs.tsx) is a larger window in the middle of
+// the canvas rather than one hanging under a sticky.
+const PEEK_W = 980;
+const PEEK_H = 700;
+// A peek's conversation pane (the frame's agent thread and reply box) on its right.
+const PANE_W = 380;
 const TOOLS = [
   { id: "select", label: "Select", icon: <path d="M6 3l12 9-5.5 1L16 20l-2.5 1-2.6-6.5L6 18z" /> },
   { id: "note", label: "Sticky", icon: <path d="M5 4h14v10l-5 6H5zM14 20v-6h5" /> },
@@ -34,29 +41,46 @@ type Props = {
   board: Editor;
   /** The open portal's sticky, or null: built and hidden. */
   noteId: string | null;
+  /** A frame being peeked at (no sticky): the window opens onto it, centred. */
+  frameId?: string | null;
+  /** Extra buttons in the title chip (a peek's Pin). */
+  extra?: React.ReactNode;
+  /** A peek's side pane (its conversation), or null for the frame alone. */
+  side?: React.ReactNode;
   shapeUtils: TLAnyShapeUtilConstructor[];
   onJump(): void;
   onClose(): void;
   toast(text: string): void;
 };
 
-export const PortalRift = memo(function PortalRift({ board, noteId, shapeUtils, onJump, onClose, toast }: Props) {
+export const PortalRift = memo(function PortalRift({ board, noteId, frameId = null, extra, side = null, shapeUtils, onJump, onClose, toast }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const [inner, setInner] = useState<Editor | null>(null);
   const mirror = useMemo(() => new PortalMirror(board), [board]);
   useEffect(() => () => mirror.dispose(), [mirror]);
-  const open = noteId !== null;
+  const peek = noteId === null ? frameId : null;
+  const source = noteId ?? peek;
+  const open = source !== null;
+  const hasSide = !!peek && !!side;
   // Strings, so board edits that leave them unchanged do not re-render the rift.
   const label = useValue("portal-rift-label", () => {
-    const p = noteId ? portalOf(board.getShape(noteId as TLShapeId)) : null;
+    const p = noteId ? portalOf(board.getShape(noteId as TLShapeId)) : peek ? { id: peek } : null;
     return p ? portalLabel(board, p) : "";
-  }, [board, noteId]);
-  const color = useValue("portal-rift-color", () => (noteId ? portalColor(board, board.getShape(noteId as TLShapeId)) : "#7c66ff"), [board, noteId]);
+  }, [board, noteId, peek]);
+  const color = useValue("portal-rift-color", () => (noteId ? portalColor(board, board.getShape(noteId as TLShapeId)) : peek ? B.violet : "#7c66ff"), [board, noteId, peek]);
   const tool = useValue("portal-rift-tool", () => inner?.getCurrentToolId() ?? "select", [inner]);
   const [focused, setFocused] = useState(false);
   const target = () => {
+    if (peek) return board.getShapePageBounds(peek as TLShapeId) ?? null;
     const p = noteId ? livePortal(board, board.getShape(noteId as TLShapeId)) : null;
     return p ? portalBounds(board, p) : null;
+  };
+  // The page the destination is on (a peeked frame can be on another page).
+  const targetPage = () => {
+    if (peek) return board.getShape(peek as TLShapeId) ? board.getAncestorPageId(peek as TLShapeId) : undefined;
+    const p = noteId ? livePortal(board, board.getShape(noteId as TLShapeId)) : null;
+    if (p && "id" in p && board.getShape(p.id as TLShapeId)) return board.getAncestorPageId(p.id as TLShapeId);
+    return board.getCurrentPageId();
   };
 
   const frame = (ed: Editor, animate: boolean) => {
@@ -68,10 +92,12 @@ export const PortalRift = memo(function PortalRift({ board, noteId, shapeUtils, 
   // next paint). Close: pause the mirror and leave the editor idle.
   useLayoutEffect(() => {
     if (!inner) return;
-    if (noteId) {
+    if (source) {
       mirror.resume();
       place();
       inner.updateViewportScreenBounds(inner.getContainer());
+      const page = targetPage();
+      if (page && page !== inner.getCurrentPageId() && inner.getPage(page)) inner.setCurrentPage(page);
       inner.selectNone();
       inner.setCurrentTool("select");
       frame(inner, false);
@@ -83,7 +109,7 @@ export const PortalRift = memo(function PortalRift({ board, noteId, shapeUtils, 
       setFocused(false);
     }
     // biome-ignore lint/correctness/useExhaustiveDependencies: on open/close only.
-  }, [inner, noteId, mirror]);
+  }, [inner, source, mirror]);
 
   // One editor has the keyboard at a time: the rift while you work in it, the board after
   // you click outside. Esc in the rift first leaves editing, then the selection, then closes.
@@ -105,6 +131,14 @@ export const PortalRift = memo(function PortalRift({ board, noteId, shapeUtils, 
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || !focused) return;
+      // Esc in a reply box with text in it leaves the box; the peek stays (the draft is kept).
+      const field = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+      if (field && wrap.current?.contains(field) && (field.tagName === "TEXTAREA" || field.tagName === "INPUT") && field.value.trim()) {
+        e.preventDefault();
+        e.stopPropagation();
+        field.blur();
+        return;
+      }
       if (inner.getEditingShapeId() || inner.getSelectedShapeIds().length || inner.getCurrentToolId() !== "select") return;
       onClose();
     };
@@ -179,9 +213,20 @@ export const PortalRift = memo(function PortalRift({ board, noteId, shapeUtils, 
   const settle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const place = useCallback(() => {
       const el = wrap.current;
+      const vb = board.getViewportScreenBounds();
+      if (el && peek) {
+        const w = Math.min(PEEK_W + (hasSide ? PANE_W : 0), vb.w - 32);
+        el.style.setProperty("--pane", hasSide ? `${Math.min(PANE_W, Math.round(w * 0.45))}px` : "0px");
+        const h = Math.min(PEEK_H, vb.h - 96);
+        el.style.transform = `translate(${Math.round((vb.w - w) / 2)}px, ${Math.round(Math.max(16, (vb.h - h) / 2 - 12))}px)`;
+        el.style.width = `${w}px`;
+        el.style.height = `${h}px`;
+        clearTimeout(settle.current);
+        settle.current = setTimeout(measure, 120);
+        return;
+      }
       const b = noteId ? board.getShapePageBounds(noteId as TLShapeId) : null;
       if (!el || !b) return;
-      const vb = board.getViewportScreenBounds();
       const bl = board.pageToViewport({ x: b.minX, y: b.maxY });
       const w = Math.min(RIFT_W, vb.w - 16);
       const h = Math.min(RIFT_H, vb.h - 120);
@@ -193,16 +238,28 @@ export const PortalRift = memo(function PortalRift({ board, noteId, shapeUtils, 
       el.style.height = `${h}px`;
       clearTimeout(settle.current);
       settle.current = setTimeout(measure, 120);
-  }, [board, noteId, measure]);
+  }, [board, noteId, peek, hasSide, measure]);
   useLayoutEffect(place, [place]);
+  // The conversation pane shown or hidden while open: the frame part changed size, so
+  // re-measure and frame the destination again once the window has its new size.
+  useEffect(() => {
+    if (!inner || !source) return;
+    const t = setTimeout(() => {
+      inner.updateViewportScreenBounds(inner.getContainer());
+      frame(inner, true);
+    }, 140);
+    return () => clearTimeout(t);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: on pane changes only.
+  }, [hasSide]);
   useQuickReactor("portal-rift-position", place, [place]);
   useEffect(() => () => clearTimeout(settle.current), []);
   return (
     <div
       ref={wrap}
-      className={`bunny-portal-rift${open ? " open" : ""}${focused ? " focused" : ""}`}
+      className={`bunny-portal-rift${open ? " open" : ""}${focused ? " focused" : ""}${peek ? " peek" : ""}`}
       data-testid={open ? "portal-window" : "portal-window-hidden"}
       data-note={noteId ?? ""}
+      data-peek={peek ?? ""}
       aria-hidden={!open}
       style={{ "--portal": color } as React.CSSProperties}
       onPointerEnter={measure}
@@ -215,12 +272,18 @@ export const PortalRift = memo(function PortalRift({ board, noteId, shapeUtils, 
       onTouchStart={stop}
       onTouchEnd={stop}
     >
+      {hasSide ? (
+        <div className="bunny-peek-side" data-testid="peek-side">
+          {side}
+        </div>
+      ) : null}
       <div className="bunny-portal-inside">
         <Tldraw licenseKey={TLDRAW_LICENSE_KEY} store={mirror.store} shapeUtils={shapeUtils} hideUi autoFocus={false} onMount={onMount} />
       </div>
       <div className="bunny-portal-chip" data-testid="portal-chip">
         <PortalIcon size={14} />
         <span className="bunny-portal-title">{label}</span>
+        {extra}
         <button type="button" className="primary" data-testid="portal-window-jump" title="Move the board there (Back returns here)" onClick={onJump}>
           Jump there
         </button>

@@ -169,14 +169,18 @@ export function contribute(server: PluginServerContext) {
       const polledAt=snap?.remote?.polledAt??0;
       const fresh=!!snap&&!snap.error&&!!polledAt&&Date.now()-polledAt<=REMOTE_STATUS_FRESH_MS;
       if(!fresh){remote.watchStatus(r.host,r.agentId);remote.prefetch(r.agentId);}
-      const d=sendNow(caps,fresh?snap!.status==='running'||snap!.status==='needs-permission':null,r.text);
+      const respondingToInput=(r.kind??'prompt')==='prompt'&&snap?.status==='needs-permission';
+      const d=sendNow(caps,fresh?snap!.status==='running'||snap!.status==='needs-permission':null,r.text,respondingToInput);
       return {wait:d.send?null:d.reason,mode:d.mode};
     }
     const aux=bridge.aux;if(!aux?.isConnected)return {wait:'waiting-host'};
-    const agent=(await withDaemonRead(()=>aux.fetchAgent(r.agentId)))?.agent as {provider?:string;status?:string;activeTurn?:unknown}|undefined;
+    const agent=(await withDaemonRead(()=>aux.fetchAgent(r.agentId)))?.agent as {provider?:string;status?:string;activeTurn?:unknown;pendingPermissions?:unknown[]}|undefined;
     if(!agent)return {wait:null}; // the send itself reports a missing agent
     const busy=agent.status==='running'||agent.status==='initializing'||!!agent.activeTurn;
-    const d=sendNow(sendCapabilities({host:null,provider:agent.provider}),busy,r.text);
+    // Pending questions can coexist with a running status (asynchronous input).
+    // An explicit reply must not wait for the question's turn to finish.
+    const respondingToInput=(r.kind??'prompt')==='prompt'&&(agent.status==='needs-permission'||!!agent.pendingPermissions?.length);
+    const d=sendNow(sendCapabilities({host:null,provider:agent.provider}),busy,r.text,respondingToInput);
     return {wait:d.send?null:d.reason,mode:d.mode};
   };
   prompts.startPending=r=>watcher.startPendingFor(r.agentId);

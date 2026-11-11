@@ -45,6 +45,25 @@ function requestFrameStart(watcher: FrameWatcher, room: BoardRoom, frameId: stri
   setImmediate(() => { void watcher.fulfil(room, frameId); });
 }
 
+// The page point just right of a shape's top-level frame (or the shape itself if loose).
+export function besideShape(room: BoardRoom, shapeId: string): {x:number;y:number} {
+  const pageId = room.pageId();
+  const near = room.records.get(shapeId);
+  if (!isShape(near)) fail(400, 'near must name a shape on this board');
+  let top: Rec = near;
+  for (let i=0; isShape(room.records.get(top.parentId)) && i<50; i++) top = room.records.get(top.parentId)!;
+  if (top.parentId !== pageId) fail(400, 'near must be on the current page');
+  const children = new Map<string, Rec[]>();
+  for (const r of room.records.values()) {
+    if (!isShape(r)) continue;
+    const list = children.get(r.parentId);
+    if (list) list.push(r); else children.set(r.parentId, [r]);
+  }
+  const box = pageBox(room.records, top, children);
+  if (!box) fail(400, 'near shape has no bounds');
+  return {x:box.x + box.w + 60, y:box.y};
+}
+
 export function startFrame(host: BoardHost, watcher: FrameWatcher, body: unknown): {frameId: string; status: string} {
   const input = parse(body);
   // host.get would create an empty board for any valid id; a typo must not start work there.
@@ -62,23 +81,7 @@ export function startFrame(host: BoardHost, watcher: FrameWatcher, body: unknown
     return {frameId: frame.id, status: startPending(frame.meta?.paseo) ? 'starting' : frame.meta?.paseo?.status ?? 'idle'};
   }
   const pageId = room.pageId();
-  let origin: {x:number;y:number} | undefined;
-  if (input.near) {
-    const near = room.records.get(input.near);
-    if (!isShape(near)) fail(400, 'near must name a shape on this board');
-    let top: Rec = near;
-    for (let i=0; isShape(room.records.get(top.parentId)) && i<50; i++) top = room.records.get(top.parentId)!;
-    if (top.parentId !== pageId) fail(400, 'near must be on the current page');
-    const children = new Map<string, Rec[]>();
-    for (const r of room.records.values()) {
-      if (!isShape(r)) continue;
-      const list = children.get(r.parentId);
-      if (list) list.push(r); else children.set(r.parentId, [r]);
-    }
-    const box = pageBox(room.records, top, children);
-    if (!box) fail(400, 'near shape has no bounds');
-    origin = {x:box.x + box.w + 60, y:box.y};
-  }
+  const origin = input.near ? besideShape(room, input.near) : undefined;
   const slot = gridSlots(topLevelBounds(room.records, pageId), 1, origin)[0];
   const frame = buildShape({type:'frame', text:input.name, ...IMPORT_FRAME, color:'light-blue'}, pageId, nextIndex(room.records,pageId), slot.x,slot.y, {
     paseo: {status:'requested', request:{kind:'create',prompt:input.opener,requestedAt:Date.now(), ...(input.provider ? {provider:input.provider} : {}), ...(input.cwd ? {cwd:input.cwd,context:'repo'} : {})}},

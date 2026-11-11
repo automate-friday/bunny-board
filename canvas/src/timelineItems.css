@@ -50,3 +50,7 @@
 .tl-btn[data-variant="danger"] { color: light-dark(#b91c1c, hsl(0 74% 74%)); border-color: light-dark(#fca5a5, hsl(0 35% 39%)); }
 .tl-btn[disabled] { opacity: .6; cursor: default; }
 .tl-compact .tl-btn { font-size: 11px; padding: 2px 8px; border-radius: 6px; }
+
+/* iOS zooms focused text controls smaller than 16px. */
+.tl-question-input { font: inherit; font-size: 12px; }
+@media (pointer: coarse) { .tl-question-input { font-size: 16px; } }

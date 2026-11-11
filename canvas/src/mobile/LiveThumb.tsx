@@ -4,9 +4,14 @@
 // then, while visible, swaps in tldraw's own image export 600 ms after the last change (one
 // at a time page-wide, only when the page is idle, cached by content; an export that fails
 // or takes over 4 s keeps the sketch: frames on another page, images from an old host).
+// Both show the frame's content, cropped to the tile's shape (no empty frame margin and no
+// bars beside it), with its words on top at a size a phone can read (stickies, text, titles):
+// at tile scale the real lettering is a few pixels high.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useValue, type Editor, type TLRecord, type TLShape, type TLShapeId } from "tldraw";
+import { richTextPlain } from "./fuzzySearch";
+import { type Box, cropBox } from "./thumbCrop";
 import { contentSignature } from "./thumbnailSignature";
 import { isFrameOnScreen, withFrameShown } from "./visibility";
 
@@ -134,7 +139,7 @@ async function store(key: string, sig: string, blob: Blob) {
 // screen for the frame-alone part) is exported whole.
 // Shapes without HTML labels (nothing for the style copy): up to three per part; others alone.
 const LIGHT = new Set(["draw", "line", "highlight", "image"]);
-async function exportInParts(editor: Editor, id: TLShapeId, scale: number, wanted: () => boolean): Promise<Blob | null> {
+async function exportInParts(editor: Editor, id: TLShapeId, crop: Box, scale: number, wanted: () => boolean): Promise<Blob | null> {
   const px = 2;
   // The phone does not load every font on the page before rendering (App.tsx): this frame's.
   const fonts = new Set<Parameters<Editor["fonts"]["ensureFontIsLoaded"]>[0]>();
@@ -143,22 +148,33 @@ async function exportInParts(editor: Editor, id: TLShapeId, scale: number, wante
     if (s) for (const f of editor.fonts.getShapeFontFaces(s)) fonts.add(f);
   }
   await Promise.all([...fonts].map((f) => editor.fonts.ensureFontIsLoaded(f).catch(() => undefined)));
-  if (isFrameOnScreen(id)) return (await withFrameShown(id, () => editor.toImage([id], { format: "png", scale, pixelRatio: px, background: true, padding: 0 }))).blob;
   const fb = editor.getShapePageBounds(id);
   if (!fb) return null;
+  // The crop of the frame the tile shows; parts are drawn at their place in it.
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(fb.w * scale * px));
-  canvas.height = Math.max(1, Math.round(fb.h * scale * px));
+  canvas.width = Math.max(1, Math.round(crop.w * scale * px));
+  canvas.height = Math.max(1, Math.round(crop.h * scale * px));
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
+  ctx.fillStyle = editor.user.getIsDarkMode() ? "#20242c" : "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const draw = async (blob: Blob, at: { x: number; y: number }, width: number, height: number) => {
+    if (blob.size <= 200) return;
+    const bmp = await createImageBitmap(blob);
+    ctx.drawImage(bmp, (at.x - crop.x) * scale * px, (at.y - crop.y) * scale * px, width, height);
+    bmp.close();
+  };
+  const done = () => new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), "image/png"));
+  if (isFrameOnScreen(id)) {
+    const res = await withFrameShown(id, () => editor.toImage([id], { format: "png", scale, pixelRatio: px, background: true, padding: 0 }));
+    await draw(res.blob, fb, res.width, res.height);
+    return done();
+  }
   const paint = async (ids: TLShapeId[], alone: boolean) => {
     const at = alone ? fb : editor.getShapesPageBounds(ids);
     if (!at?.w || !at.h) return;
     const res = await withFrameShown(id, () => editor.toImage(ids, { format: "png", scale, pixelRatio: px, background: alone, padding: 0 }), alone);
-    if (res.blob.size <= 200) return;
-    const bmp = await createImageBitmap(res.blob);
-    ctx.drawImage(bmp, (at.x - fb.x) * scale * px, (at.y - fb.y) * scale * px, res.width, res.height);
-    bmp.close();
+    await draw(res.blob, at, res.width, res.height);
   };
   await paint([id], true);
   const kids = editor.getSortedChildIdsForParent(id);
@@ -174,13 +190,22 @@ async function exportInParts(editor: Editor, id: TLShapeId, scale: number, wante
     if (!wanted()) return null;
     await paint(batch, false);
   }
-  return new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png"));
+  return done();
+}
+
+function cropOf(editor: Editor, id: string, w: number, h: number): Box | null {
+  const fb = editor.getShapePageBounds(id as TLShapeId);
+  if (!fb?.w || !fb.h) return null;
+  const kids = editor.getSortedChildIdsForParent(id as TLShapeId);
+  return cropBox(fb, kids.length ? (editor.getShapesPageBounds(kids) ?? null) : null, w, h);
 }
 
 let queue: Promise<unknown> = Promise.resolve();
 // The image for a frame as it is now: from memory, IndexedDB, or (when idle) a fresh export.
 function render(editor: Editor, id: string, w: number, h: number, wanted: () => boolean): Promise<string | null> {
-  const key = `${location.search}|${id}|${w}x${h}`;
+  // Keyed by board, not the whole URL: the open frame is in the URL too (places.ts), and a key
+  // per frame would export every thumbnail again. Same form as the old "?board=<id>" keys.
+  const key = `?${new URLSearchParams({ board: new URLSearchParams(location.search).get("board") || "main" })}|${id}|${w}x${h}`;
   const sig = contentSignature(editor, id);
   const hit = memory.get(key);
   if (hit?.sig === sig) {
@@ -199,12 +224,12 @@ function render(editor: Editor, id: string, w: number, h: number, wanted: () => 
       }
       await idle();
       if (!wanted()) return null;
-      const bounds = editor.getShapePageBounds(id as TLShapeId);
-      if (!bounds?.w || !bounds.h) return null;
+      const crop = cropOf(editor, id, w, h);
+      if (!crop) return null;
       // tldraw exports from the current page only; elsewhere the export is blank.
       if (editor.getAncestorPageId(id as TLShapeId) !== editor.getCurrentPageId()) return null;
-      const scale = Math.min(1, w / bounds.w, h / bounds.h);
-      const shot = exportInParts(editor, id as TLShapeId, scale, wanted).then((blob) => {
+      const scale = Math.min(1, w / crop.w);
+      const shot = exportInParts(editor, id as TLShapeId, crop, scale, wanted).then((blob) => {
         if (!blob || blob.size <= 200 || !wanted() || contentSignature(editor, id) !== sig) return null;
         const url = URL.createObjectURL(blob);
         remember(key, sig, url);
@@ -227,11 +252,19 @@ const COLORS: Record<string, string> = {
 const NOTE_FILL: Record<string, string> = { black: "#e8e8e8", grey: "#d9dde1", "light-violet": "#f2c9fa", violet: "#e0b3ea", blue: "#bccafa", "light-blue": "#b9dafb", yellow: "#fde9b6", orange: "#fbcfa7", green: "#b2e2cc", "light-green": "#c4ecc8", "light-red": "#fdd0d0", red: "#f6b8b8", white: "#ffffff" };
 
 type Mark = { d: string; fill: string; stroke: string; width: number };
+// A readable word block over a shape: its page box, its text, and its backing (a sticky's colour).
+type Label = { box: Box; text: string; kind: "note" | "text" | "title"; fill?: string };
+const plainOf = (props: Record<string, unknown>): string => {
+  if (props.richText) return richTextPlain(props.richText);
+  for (const k of ["text", "title", "name"]) if (typeof props[k] === "string" && props[k]) return props[k] as string;
+  return "";
+};
 // The frame's shapes as SVG paths in page space (decimated), read once per version.
-function sketch(editor: Editor, frameId: string): { box: { x: number; y: number; w: number; h: number }; marks: Mark[] } | null {
+function sketch(editor: Editor, frameId: string): { box: Box; marks: Mark[]; labels: Label[] } | null {
   const b = editor.getShapePageBounds(frameId as TLShapeId);
   if (!b?.w || !b.h) return null;
   const marks: Mark[] = [];
+  const labels: Label[] = [];
   const walk = (parent: string, depth: number) => {
     for (const childId of editor.getSortedChildIdsForParent(parent as TLShapeId)) {
       const s = editor.getShape(childId) as TLShape | undefined;
@@ -252,6 +285,10 @@ function sketch(editor: Editor, frameId: string): { box: { x: number; y: number;
         else if (kind === "image" || kind === "video" || kind === "bookmark" || kind === "embed") marks.push({ d, fill: "light-dark(#e4ddd2, var(--bunny-raised))", stroke: "light-dark(#cfc6b8, var(--bunny-muted))", width: 2 });
         else if (!geo.isClosed) marks.push({ d, fill: "none", stroke: color, width: 4 });
         else marks.push({ d, fill: props.fill && props.fill !== "none" ? `${color}33` : "light-dark(#fff, var(--bunny-surface))", stroke: kind === "geo" || kind === "arrow" ? color : "light-dark(#d8d0c4, var(--bunny-muted))", width: 3 });
+        const text = kind === "arrow" || kind === "draw" || kind === "line" || kind === "highlight" ? "" : plainOf(s.props as Record<string, unknown>).slice(0, 200);
+        const at = editor.getShapePageBounds(s);
+        if (text && at?.w && at.h)
+          labels.push({ box: { x: at.x, y: at.y, w: at.w, h: at.h }, text, kind: kind === "note" ? "note" : kind === "text" || kind === "geo" ? "text" : "title", fill: kind === "note" ? (NOTE_FILL[props.color ?? "yellow"] ?? "#fde9b6") : undefined });
       } catch {
         /* a shape without geometry: skipped */
       }
@@ -259,11 +296,54 @@ function sketch(editor: Editor, frameId: string): { box: { x: number; y: number;
     }
   };
   walk(frameId, 0);
-  return { box: { x: b.x, y: b.y, w: b.w, h: b.h }, marks };
+  return { box: { x: b.x, y: b.y, w: b.w, h: b.h }, marks, labels: labels.slice(0, 60) };
+}
+
+// The words over the tile, placed in percent of the crop so they sit on their shapes in the
+// image or the sketch; font in screen pixels (readable), clipped to the shape.
+function Labels({ labels, crop, tileW }: { labels: Label[]; crop: Box; tileW: number }) {
+  const k = tileW / crop.w;
+  return (
+    <span className="bm-thumb-labels">
+      {labels.map((l, i) => {
+        // Measure only the part inside the tile, so a shape cut by the edge does not show "St".
+        const pw = (Math.min(l.box.x + l.box.w, crop.x + crop.w) - Math.max(l.box.x, crop.x)) * k;
+        const ph = l.box.h * k;
+        // Below ~44px a label only fits a few letters per line and splits words mid-way
+        // ("Merge/d"); the coloured shape alone reads better.
+        if (pw < 44 || ph < 12) return null;
+        const font = Math.max(8, Math.min(12, pw / 7));
+        const style = {
+          left: `${((l.box.x - crop.x) / crop.w) * 100}%`,
+          top: `${((l.box.y - crop.y) / crop.h) * 100}%`,
+          width: `${(l.box.w / crop.w) * 100}%`,
+          height: l.kind === "title" ? undefined : `${(l.box.h / crop.h) * 100}%`,
+          maxHeight: `${(l.box.h / crop.h) * 100}%`,
+          fontSize: font,
+          background: l.fill,
+          WebkitLineClamp: Math.max(1, Math.floor((ph - 4) / (font * 1.25))),
+        };
+        // biome-ignore lint/suspicious/noArrayIndexKey: a static drawing.
+        return <span key={i} className="bm-thumb-label" data-kind={l.kind} style={style}>{l.text}</span>;
+      })}
+    </span>
+  );
 }
 
 export function LiveThumb({ editor, id, w = 220, h = 140 }: { editor: Editor; id: string; w?: number; h?: number }) {
   const box = useRef<HTMLSpanElement>(null);
+  // The tile's own size (the crop takes its shape), rounded so a pixel of layout does not re-export.
+  const [size, setSize] = useState({ w, h });
+  useEffect(() => {
+    const el = box.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 8 && r.height > 8) setSize((o) => (Math.abs(o.w - r.width) < 4 && Math.abs(o.h - r.height) < 4 ? o : { w: Math.round(r.width), h: Math.round(r.height) }));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const dark = useValue("thumbnail-theme", () => editor.user.getIsDarkMode(), [editor]);
   const [image, setImage] = useState<{ url: string; dark: boolean } | null>(null);
   const url = image?.dark === dark ? image.url : null;
@@ -297,7 +377,7 @@ export function LiveThumb({ editor, id, w = 220, h = 140 }: { editor: Editor; id
     let live = true;
     // Images are shared through the cache (memory), so a tile never revokes one.
     const t = setTimeout(() => {
-      void render(editor, id, w, h, () => live).then((next) => {
+      void render(editor, id, size.w, size.h, () => live).then((next) => {
         if (live && next) setImage({ url: next, dark });
       });
     }, url ? 600 : 0);
@@ -305,15 +385,17 @@ export function LiveThumb({ editor, id, w = 220, h = 140 }: { editor: Editor; id
       live = false;
       clearTimeout(t);
     };
-  }, [editor, id, visible, version, w, h, dark]);
+  }, [editor, id, visible, version, size.w, size.h, dark]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is the redraw trigger.
   const drawn = useMemo(() => (visible ? sketch(editor, id) : null), [editor, id, visible, version, dark]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is the redraw trigger.
+  const crop = useMemo(() => (drawn ? cropOf(editor, id, size.w, size.h) : null), [editor, id, drawn, size.w, size.h, version]);
   return (
     <span ref={box} className="bm-thumb" data-thumb={url ? "ready" : drawn ? "sketch" : "pending"} data-thumb-theme={dark ? "dark" : "light"} data-marks={drawn?.marks.length ?? 0} data-version={version} aria-hidden="true">
       {url ? (
         <img src={url} alt="" />
-      ) : drawn ? (
-        <svg viewBox={`${drawn.box.x} ${drawn.box.y} ${drawn.box.w} ${drawn.box.h}`} preserveAspectRatio="xMidYMid meet">
+      ) : drawn && crop ? (
+        <svg viewBox={`${crop.x} ${crop.y} ${crop.w} ${crop.h}`} preserveAspectRatio="xMidYMin slice">
           <rect x={drawn.box.x} y={drawn.box.y} width={drawn.box.w} height={drawn.box.h} fill="light-dark(#fff, var(--bunny-surface))" />
           {drawn.marks.map((m, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: a static drawing.
@@ -321,6 +403,7 @@ export function LiveThumb({ editor, id, w = 220, h = 140 }: { editor: Editor; id
           ))}
         </svg>
       ) : null}
+      {drawn && crop && drawn.labels.length ? <Labels labels={drawn.labels} crop={crop} tileW={size.w} /> : null}
     </span>
   );
 }

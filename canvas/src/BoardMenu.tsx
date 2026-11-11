@@ -10,13 +10,12 @@ import {boardLocks, deviceLock} from './locks';
 import {RefreshNotice} from './RefreshNotice';
 import {useVisualViewport} from './visualViewport';
 import { Emoji } from "./Emoji";
+import { openPlace } from "./places";
 import { ArchiveMenuItem, usePendingArchive } from "./FrameArchive";
 
+// In place, without a page reload (places.ts): the bundle and agent stream stay loaded.
 export function goToBoard(id: string): void {
-  const q = new URLSearchParams(window.location.search);
-  q.set('board', id);
-  q.delete('frame');
-  window.location.search = q.toString();
+  openPlace(id, null);
 }
 
 interface BoardRow {id:string;frames:number;boundFrames:number;lastActivityAt:string}

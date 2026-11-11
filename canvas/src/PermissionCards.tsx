@@ -150,6 +150,7 @@ function QuestionForm({ questions, busy, onSubmit, onDismiss, dismissLabel }: { 
           {questionShowsTextInput(q) ? (
             <input
               type="text"
+              className="tl-question-input"
               value={otherTexts[qi] ?? ""}
               placeholder={q.placeholder ?? (q.options.length ? "Other…" : "Your answer…")}
               disabled={busy}
@@ -158,7 +159,7 @@ function QuestionForm({ questions, busy, onSubmit, onDismiss, dismissLabel }: { 
                 setOtherTexts((prev) => ({ ...prev, [qi]: value }));
                 if (!q.multiSelect && value) setSelections((prev) => ({ ...prev, [qi]: new Set() }));
               }}
-              style={{ font: "inherit", fontSize: 12, border: "1px solid light-dark(#cbd5e1, hsl(213 35% 39%))", borderRadius: 8, padding: "4px 8px" }}
+              style={{ border: "1px solid light-dark(#cbd5e1, hsl(213 35% 39%))", borderRadius: 8, padding: "4px 8px" }}
             />
           ) : null}
         </fieldset>

@@ -8,6 +8,8 @@
     "@tldraw/sync": "5.2.2",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tldraw": "5.2.2"
   },
   "devDependencies": {
