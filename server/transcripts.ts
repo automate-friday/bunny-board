@@ -3,6 +3,7 @@ import {threadNotLoaded,daemonFailureReason} from "./daemon-health";
 import { withDaemonRead } from "./daemon-health";
 import { hostOperation } from "./daemon-health";
 import {timelineRows} from "./timeline-pages";
+import {joinSyntheticText} from "./timeline";
 // One live view per agent, shared by every browser tab and every card that shows it.
 //
 // For each agent somebody is watching, the hub holds exactly one Paseo timeline
@@ -345,7 +346,8 @@ export class TranscriptHub {
     if(m.event?.type==='thread_started'){this.wake(e);return false;}
     if(e.snap){
       if(m.event?.type==='turn_started'){this.setStatus(e.agentId,'running');return true;}
-      if(m.event?.type==='turn_completed'){this.setStatus(e.agentId,'idle');return true;}
+      if(m.event?.type==='turn_completed'||m.event?.type==='turn_canceled'){this.setStatus(e.agentId,'idle');return true;}
+      if(m.event?.type==='turn_failed'){this.setStatus(e.agentId,'error');return true;}
       if(m.event?.type==='permission_requested'){this.setStatus(e.agentId,'needs-permission');return true;}
       if(m.event?.type==='attention_required')return true;
     }
@@ -358,7 +360,10 @@ export class TranscriptHub {
     // Only contiguous chunks of the same type and turn extend the streaming row.
     let entry={seqStart:m.seq!,seqEnd:m.seq!,timestamp:m.timestamp??new Date().toISOString(),item:m.event.item,turnId:m.event.turnId};
     const item=m.event.item as {type?:string;text?:unknown;messageId?:unknown}|undefined,prev=e.stream;
-    if((item?.type==='assistant_message'||item?.type==='reasoning')&&prev&&prev.type===item.type&&prev.seqEnd+1===m.seq&&prev.turnId===m.event.turnId&&(item.type==='reasoning'||item.messageId===undefined||item.messageId===prev.messageId))
+    // Chunks Paseo gave synthetic ids (streamed outside a turn) join too; see joinSyntheticText.
+    const joined=prev?joinSyntheticText({seqStart:prev.seqStart,seqEnd:prev.seqEnd,turnId:prev.turnId,item:{type:prev.type,messageId:prev.messageId,text:prev.text}},{seqStart:m.seq!,seqEnd:m.seq!,turnId:m.event.turnId,item}):null;
+    if(prev&&joined!==null)entry={...entry,seqStart:prev.seqStart,item:{...item,text:joined,messageId:prev.messageId}};
+    else if((item?.type==='assistant_message'||item?.type==='reasoning')&&prev&&prev.type===item.type&&prev.seqEnd+1===m.seq&&prev.turnId===m.event.turnId&&(item.type==='reasoning'||item.messageId===undefined||item.messageId===prev.messageId))
       entry={...entry,seqStart:prev.seqStart,item:{...item,text:`${prev.text}${String(item.text??'')}`,...(prev.messageId?{messageId:prev.messageId}:{})}};
     e.stream=streamTail(entry);
     const row=timelineRows({epoch:e.epoch,entries:[entry]} as Parameters<typeof timelineRows>[0],e.agentId)[0];

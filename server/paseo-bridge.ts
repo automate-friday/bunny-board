@@ -154,7 +154,16 @@ export function statusOf(agent: any | null | undefined): AgentStatus {
   if (!agent) return "missing";
   if (agent.archivedAt) return "archived";
   if (Array.isArray(agent.pendingPermissions) && agent.pendingPermissions.length > 0) return "needs-permission";
-  if (agent.status === "running" || agent.activeTurn) return "running";
+  // A terminal failure can retain the previous turn while the provider unwinds.
+  // It must not keep the UI or message queue waiting on that dead turn.
   if (agent.status === "error") return "error";
+  if (agentBusy(agent)) return "running";
   return "idle";
+}
+
+// Share the turn predicate with delivery and lifecycle projection. Historical
+// lastError alone is not terminal: a later turn may already be running.
+export function agentBusy(agent: {status?: string; activeTurn?: unknown; archivedAt?: unknown} | null | undefined): boolean {
+  return !!agent && !agent.archivedAt && agent.status !== "error" &&
+    (agent.status === "running" || agent.status === "initializing" || !!agent.activeTurn);
 }

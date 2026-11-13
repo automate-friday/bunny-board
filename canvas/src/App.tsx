@@ -9,6 +9,7 @@ import { moveFramesToPage, newPage, showMoved } from "./moveFrames";
 import { installTextBoundsMeasurements } from "./measuredTextBounds";
 import { useSync } from "@tldraw/sync";
 import { useCachedSync } from "./cachedSync";
+import { installSnapshotResponder, onBoardMessage } from "./frameSnapshot";
 import { boardCacheEnabled } from "./boardCache";
 import { markLaunch } from "./launchTiming";
 import { MenuPanelWithNewAgent } from "./NewAgentButton";
@@ -82,6 +83,8 @@ import { COMPONENTS_VERSION } from "../../shared/components/transcript";
 import { HostRecoveryBanner } from "./HostRecoveryBanner";
 import { ReviewRegions } from "./ReviewRegion";
 import { Channels } from "./Channels";
+import { LinkChannels } from "./LinkChannels";
+import { ConnectPicker } from "./ConnectPicker";
 import { handleImageDrop } from "./fileDrop";
 import { uploadImage, UploadProgress } from "./uploads";
 import { ReportBookmarkShapeUtil } from "./components/report/shape";
@@ -96,6 +99,7 @@ import { BoardControls, PausedBadges, useNarrow } from "./BoardControls";
 import { BoardHeader } from "./BoardHeader";
 import { initDeviceLock, installLayoutGuard } from "./locks";
 import { FramePanel } from "./FramePanel";
+import { ChannelLayer } from "./ChannelLayer";
 import { usePanelDock } from "./framePanelDock";
 import { DockRow } from "./DockRow";
 import { noteViewed } from "./jumpPaletteModel";
@@ -111,7 +115,9 @@ import { SidebarToggle } from "./SidebarToggle";
 import { readSidebar, writeSidebar } from "./sidebarMemory";
 import { BoardUiCtx } from "./ui";
 import { JumpPalette } from "./JumpPalette";
-import { framePeek, Portals } from "./portals/Portals";
+import { framePeek, pinToScreen, Portals } from "./portals/Portals";
+import { ScreenPills } from "./portals/ScreenPills";
+import { updateScreenPin } from "./portals/screenPins";
 import { PORTAL_TOOL, PortalTool, PortalToolIcon } from "./portals/PortalTool";
 import { installEditKeyBuffer } from "./editKeyBuffer";
 import { installFrameRenameFocus } from "./frameRename";
@@ -141,7 +147,7 @@ declare global {
 
 // Phones and the home-screen app draw a saved copy of the board at once and fetch only what
 // changed (cachedSync.ts); desktop tabs sync as before. Fixed for the page's life.
-const useBoardSync: (o: { uri: string; assets: TLAssetStore; shapeUtils: typeof shapeUtils; boardId: string }) => ReturnType<typeof useSync> = boardCacheEnabled() ? useCachedSync : ({ uri, assets, shapeUtils }) => useSync({ uri, assets, shapeUtils });
+const useBoardSync: (o: { uri: string; assets: TLAssetStore; shapeUtils: typeof shapeUtils; boardId: string }) => ReturnType<typeof useSync> = boardCacheEnabled() ? useCachedSync : ({ uri, assets, shapeUtils }) => useSync({ uri, assets, shapeUtils, onCustomMessageReceived: onBoardMessage });
 
 function params() {
   const q = new URLSearchParams(window.location.search);
@@ -281,7 +287,7 @@ const browserStorage = (): Storage | undefined => {
     return undefined;
   }
 };
-const SidebarCtx = createContext<{ open(frameId: string): void }>({ open() {} });
+const SidebarCtx = createContext<{ open(frameId: string): void; current: string | null }>({ open() {}, current: null });
 
 // Mounted when the context menu opens (right click, or a long press on touch, where no
 // contextmenu event reaches the page): the pointer is still where the menu was opened.
@@ -402,32 +408,38 @@ function PeekPin({ editor, boardId, frameId }: { editor: Editor; boardId: string
   const pinned = pins.includes(frameId);
   const full = !pinned && pins.length >= PIN_LIMIT;
   return (
-    <button type="button" data-testid="peek-pin" aria-pressed={pinned} disabled={full} title={pinned ? "Unpin this frame" : full ? `Pins are full (${PIN_LIMIT}): unpin one first` : "Pin this frame (on every device)"} onClick={() => toggle(frameId)}>
-      {pinned ? "Unpin" : "Pin"}
+    <button type="button" role="menuitem" data-testid="peek-pin" aria-pressed={pinned} title={pinned ? "Unpin this frame" : full ? `Pin (replaces your least used of ${PIN_LIMIT} pins)` : "Pin this frame (on every device)"} onClick={() => toggle(frameId)}>
+      {pinned ? "Unpin from tabs" : "Pin to tabs"}
     </button>
   );
 }
 
-// Whether a frame peek shows its conversation pane (the Chat button in its title chip).
-const PEEK_CHAT_KEY = "bunny-peek-chat";
-function usePeekChat(): [boolean, (on: boolean) => void] {
+// A frame peek's conversation pane: unfolded (bunny-peek-chat, on by default) and widened for
+// reading (bunny-peek-chat-wide, off by default), remembered on this device.
+function useStoredFlag(key: string, fallback: boolean): [boolean, (on: boolean) => void] {
   const [on, setOn] = useState(() => {
     try {
-      return localStorage.getItem(PEEK_CHAT_KEY) !== "0";
+      const v = localStorage.getItem(key);
+      return v === null ? fallback : v === "1";
     } catch {
-      return true;
+      return fallback;
     }
   });
-  const set = useCallback((next: boolean) => {
-    setOn(next);
-    try {
-      localStorage.setItem(PEEK_CHAT_KEY, next ? "1" : "0");
-    } catch {
-      /* the choice lasts until reload */
-    }
-  }, []);
+  const set = useCallback(
+    (next: boolean) => {
+      setOn(next);
+      try {
+        localStorage.setItem(key, next ? "1" : "0");
+      } catch {
+        /* the choice lasts until reload */
+      }
+    },
+    [key],
+  );
   return [on, set];
 }
+const usePeekChat = () => useStoredFlag("bunny-peek-chat", true);
+const usePeekChatWide = () => useStoredFlag("bunny-peek-chat-wide", false);
 
 function Overlay({ boardId, focusFrame }: { boardId: string; focusFrame: string | null }) {
   const editor = useEditor();
@@ -446,11 +458,16 @@ function Overlay({ boardId, focusFrame }: { boardId: string; focusFrame: string 
   const [dock] = usePanelDock();
   const history = useContext(HistoryCtx);
   const bound = useValue("bound-of-selection", () => (selected ? conversationFrameOf(editor, selected) : null), [editor, selected]);
-  // A selected frame gets its frame panel (floating near it, or docked bottom-right).
-  const selectedFrame = selected?.type === "frame" ? (selected as TLFrameShape) : null;
+  // A selected frame without an agent gets its frame panel (Start conversation; floating near
+  // it, or docked bottom-right). A frame with an agent has everything in its conversation's
+  // ⋯ menu (FrameActions.tsx) instead.
+  // biome-ignore lint/suspicious/noExplicitAny: meta JSON.
+  const selectedPaseo = selected?.type === "frame" ? (selected.meta as any)?.paseo : null;
+  const selectedFrame = selected?.type === "frame" && !(selectedPaseo?.agentId && !selectedPaseo?.request) ? (selected as TLFrameShape) : null;
   // A frame peek: Pin and (for a frame with an agent) Chat in its title chip, and the
   // agent's conversation in a pane beside the frame, to reply without going there.
   const [peekChat, setPeekChat] = usePeekChat();
+  const [peekChatWide, setPeekChatWide] = usePeekChatWide();
   const peekId = useValue(framePeek);
   const peekBound = useValue(
     "peek-bound",
@@ -465,18 +482,30 @@ function Overlay({ boardId, focusFrame }: { boardId: string; focusFrame: string 
     (id: string) => (
       <>
         <PeekPin editor={editor} boardId={boardId} frameId={id} />
-        {peekBound ? (
-          <button type="button" data-testid="peek-chat" aria-pressed={peekChat} title={peekChat ? "Hide the conversation" : "Show the conversation, to reply here"} onClick={() => setPeekChat(!peekChat)}>
-            Chat
-          </button>
-        ) : null}
+        <button type="button" role="menuitem" data-testid="peek-pin-screen" title="Keep a small window on this frame while you work elsewhere (its pill is at the bottom)" onClick={() => pinToScreen(editor, id, ui.toast)}>
+          Pin to screen
+        </button>
       </>
     ),
-    [editor, boardId, peekBound, peekChat, setPeekChat],
+    [editor, boardId, ui],
+  );
+  // When the main sidebar already shows the peeked frame's conversation, the peek's copy
+  // starts folded (no duplicate by default) but its strip is always there to open it; that
+  // choice lasts for this peek only.
+  const peekDup = !!peekId && sidebar.current === peekId;
+  const [dupOpen, setDupOpen] = useState(false);
+  useEffect(() => setDupOpen(false), [peekId]);
+  const peekChatShown = peekDup ? dupOpen : peekChat;
+  const togglePeekChat = useCallback(() => (peekDup ? setDupOpen((o) => !o) : setPeekChat(!peekChat)), [peekDup, peekChat, setPeekChat]);
+  // A screen window's conversation (Portals.tsx folds it into a strip until opened).
+  // ⛶ in the embedded conversation widens it to 3/4 of the window (as the main sidebar's ⛶ does).
+  const windowConversation = useCallback(
+    (id: string, wide: boolean, setWide: (wide: boolean) => void) => <Sidebar key={id} embedded editor={editor} frameId={id} boardId={boardId} reading={wide} onReadingChange={setWide} onClose={() => updateScreenPin(id, { chat: false })} />,
+    [editor, boardId],
   );
   const peekSide = useCallback(
-    (id: string) => (peekChat && peekBound ? <Sidebar key={id} embedded editor={editor} frameId={id} boardId={boardId} onClose={() => setPeekChat(false)} /> : null),
-    [editor, boardId, peekBound, peekChat, setPeekChat],
+    (id: string) => (peekBound ? <Sidebar key={id} embedded editor={editor} frameId={id} boardId={boardId} reading={peekChatWide} onReadingChange={setPeekChatWide} onClose={() => (sidebar.current === id ? setDupOpen(false) : setPeekChat(false))} /> : null),
+    [editor, boardId, peekBound, setPeekChat, sidebar.current, peekChatWide, setPeekChatWide],
   );
 
   // The nearest frame owns the selection, including an unbound nested frame.
@@ -488,7 +517,7 @@ function Overlay({ boardId, focusFrame }: { boardId: string; focusFrame: string 
   // The phone shell opens threads itself (thread peek, need-you pill, Follow agent).
   useEffect(() => {
     if (bound && !mobile) sidebar.open(bound.id);
-  }, [bound?.id, sidebar, mobile]);
+  }, [bound?.id, sidebar.open, mobile]);
 
   // Deep link: select and zoom to ?frame= once it exists in the store.
   useEffect(() => {
@@ -511,9 +540,12 @@ function Overlay({ boardId, focusFrame }: { boardId: string; focusFrame: string 
       <Comments editor={editor} />
       <PausedBadges editor={editor} />
       <FrameCompression editor={editor} boardId={boardId} />
-      <Channels editor={editor} boardId={boardId} />
+      <ChannelLayer editor={editor}>
+        <Channels editor={editor} boardId={boardId} />
+        <LinkChannels editor={editor} boardId={boardId} />
+      </ChannelLayer>
       <ReviewRegions editor={editor} />
-      <Portals editor={editor} toast={ui.toast} rift={portalRift} peekExtra={peekExtra} peekSide={peekSide} />
+      <Portals editor={editor} toast={ui.toast} rift={portalRift} peekExtra={peekExtra} peekSide={peekSide} peekChatOpen={peekChatShown} onPeekChat={togglePeekChat} peekChatWide={peekChatWide} boardId={mobile ? undefined : boardId} conversation={windowConversation} />
       <ProposalBanner editor={editor} />
       <EmptyBoardHint editor={editor} />
       {mobile ? (
@@ -524,7 +556,10 @@ function Overlay({ boardId, focusFrame }: { boardId: string; focusFrame: string 
       {selectedFrame && dock === "float" ? <FramePanel frame={selectedFrame} boardId={boardId} onOpen={() => sidebar.open(selectedFrame.id)} /> : null}
       {/* Bottom dock: the docked panel (or its pill) for the selected frame. Pinned frames
           live in the frame tabs (FrameTabs.tsx). */}
-      <DockRow>{dock === "float" || !selectedFrame ? null : <FramePanel frame={selectedFrame} boardId={boardId} onOpen={() => sidebar.open(selectedFrame.id)} />}</DockRow>
+      <DockRow>
+        {dock === "float" || !selectedFrame ? null : <FramePanel frame={selectedFrame} boardId={boardId} onOpen={() => sidebar.open(selectedFrame.id)} />}
+        <ScreenPills editor={editor} />
+      </DockRow>
       </>
       )}
       {history.frameId ? <FrameHistoryView key={history.frameId} editor={editor} boardId={boardId} frameId={history.frameId} shapeUtils={shapeUtils} /> : null}
@@ -637,13 +672,14 @@ export function App() {
     if (sidebarFrame) noteViewed(boardId, userId, sidebarFrame);
   }, [boardId, userId, sidebarFrame]);
   const [reading, setReading] = useState(remembered.reading === true);
+  const [sidebarWidth, setSidebarWidth] = useState<number | null>(remembered.width ?? null);
   const [lastSidebarFrame, setLastSidebarFrame] = useState<string | null>(frameId ?? remembered.frame);
   useEffect(() => {
     if (sidebarFrame) setLastSidebarFrame(sidebarFrame);
   }, [sidebarFrame]);
   useEffect(() => {
-    if (!mobile) writeSidebar(browserStorage(), boardId, { frame: sidebarFrame ?? lastSidebarFrame, open: !!sidebarFrame, reading });
-  }, [boardId, mobile, sidebarFrame, lastSidebarFrame, reading]);
+    if (!mobile) writeSidebar(browserStorage(), boardId, { frame: sidebarFrame ?? lastSidebarFrame, open: !!sidebarFrame, reading, ...(sidebarWidth !== null ? { width: sidebarWidth } : {}) });
+  }, [boardId, mobile, sidebarFrame, lastSidebarFrame, reading, sidebarWidth]);
   // The frame whose History slider is open (FrameHistory.tsx); one at a time.
   const [historyFrame, setHistoryFrame] = useState<string | null>(null);
   // Tab title: the frame whose conversation is selected or open, then the board.
@@ -661,7 +697,9 @@ export function App() {
     document.title = tabTitle(boardId, titleFrame);
   }, [boardId, titleFrame]);
   const historyApi = useMemo(() => ({ frameId: historyFrame, open: (id: string) => setHistoryFrame(id), close: () => setHistoryFrame(null) }), [historyFrame]);
-  const sidebarApi = useMemo(() => ({ open: (id: string) => setSidebarFrame(id) }), []);
+  // `open` stays the same function; `current` (the frame shown) changes with it.
+  const openSidebar = useCallback((id: string) => setSidebarFrame(id), []);
+  const sidebarApi = useMemo(() => ({ open: openSidebar, current: sidebarFrame }), [openSidebar, sidebarFrame]);
   // The Archive panel (FrameArchive.tsx) takes the sidebar's place while open.
   const [archiveTab, setArchiveTab] = useState<ArchiveTab | null>(null);
   const archiveApi = useMemo(
@@ -726,6 +764,8 @@ export function App() {
       window.__editor = editor;
       window.__board = { boardId, userId, userName };
       const stopAnchorKeeper = installCommentAnchorKeeper(editor);
+      // board_snapshot: draw a frame for its agent when the server asks (frameSnapshot.tsx).
+      const stopSnapshots = installSnapshotResponder(editor, boardId, shapeUtils);
       // Agent edits arrive within a frame, not batched once a second (see syncRate.ts).
       const stopSyncRate = keepCollaborativeSyncRate(editor);
       editor.user.updateUserPreferences({ name: userName });
@@ -821,6 +861,7 @@ export function App() {
         stopMeasurements();
         stopDelete();
         stopAnchorKeeper();
+        stopSnapshots();
         stopSyncRate();
         stopPinchFix();
         stopGuard();
@@ -842,8 +883,10 @@ export function App() {
     <div style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column" }}>
       <HostRecoveryBanner boardId={boardId} editor={editor} />
       {editor ? <JumpPalette editor={editor} boardId={boardId} userId={userId} onFindConversations={() => setPicker({ kind: "grid", at: null })} /> : null}
+      {/* "Connect to…" from a conversation's ⋯ menu: the ⌘K list over the frames it can be connected to. */}
+      {editor ? <BoardUiCtx.Provider value={boardUi}><ConnectPicker editor={editor} boardId={boardId} userId={userId} mobile={mobile} /></BoardUiCtx.Provider> : null}
       <div style={{ flex: 1, minHeight: 0, display: "flex", position: "relative" }}>
-      {editor && !mobile && !phone ? <Suspense fallback={null}><FrameTabs key={boardId} editor={editor} boardId={boardId} userId={userId} /></Suspense> : null}
+      {editor && !mobile && !phone ? <BoardUiCtx.Provider value={boardUi}><Suspense fallback={null}><FrameTabs key={boardId} editor={editor} boardId={boardId} userId={userId} /></Suspense></BoardUiCtx.Provider> : null}
       <SidebarCtx.Provider value={sidebarApi}>
         <BoardUiCtx.Provider value={boardUi}>
         <HistoryCtx.Provider value={historyApi}>
@@ -883,7 +926,16 @@ export function App() {
       ) : released.length ? (
         <ReleasedPrompt agents={released} onDone={(id) => setReleased((list) => list.filter((a) => a.agentId !== id))} />
       ) : editor && sidebarFrame ? (
-        <Sidebar key={sidebarFrame} editor={editor} frameId={sidebarFrame} boardId={boardId} sheet={phone || mobile} mobile={mobile} reading={reading} onReadingChange={setReading} onClose={() => setSidebarFrame(null)} onArchive={(id) => archiveApi.archive([id])} />
+        // The board's contexts reach the sidebar too (its ⋯ menu toasts, opens history, archives).
+        <BoardUiCtx.Provider value={boardUi}>
+          <HistoryCtx.Provider value={historyApi}>
+            <ArchiveCtx.Provider value={archiveApi}>
+              <MobileCtx.Provider value={mobile}>
+                <Sidebar key={sidebarFrame} editor={editor} frameId={sidebarFrame} boardId={boardId} sheet={phone || mobile} mobile={mobile} reading={reading} onReadingChange={setReading} width={sidebarWidth} onWidthChange={setSidebarWidth} onClose={() => setSidebarFrame(null)} />
+              </MobileCtx.Provider>
+            </ArchiveCtx.Provider>
+          </HistoryCtx.Provider>
+        </BoardUiCtx.Provider>
       ) : null}
       {picker ? (
         <ImportPicker
@@ -912,7 +964,8 @@ export function App() {
       {toastText ? (
         <div
           data-testid="board-toast"
-          style={{ position: "fixed", bottom: 70, left: "50%", transform: "translateX(-50%)", background: "#222", color: "#fff", padding: "8px 14px", borderRadius: 8, font: "13px system-ui, sans-serif", zIndex: 1100, maxWidth: "90vw" }}
+          // Above the organizer's corner launcher (1150), so an action (Undo) is never covered.
+          style={{ position: "fixed", bottom: 70, left: "50%", transform: "translateX(-50%)", background: "#222", color: "#fff", padding: "8px 14px", borderRadius: 8, font: "13px system-ui, sans-serif", zIndex: 1160, maxWidth: "90vw" }}
         >
           {toastText}
           {toast?.action ? (

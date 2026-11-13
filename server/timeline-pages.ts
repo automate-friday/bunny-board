@@ -1,5 +1,5 @@
 import type {PaseoAgentTimelineHandle} from '@getpaseo/client';
-import {projectItem,redactBoardTokens,simplifyItem} from './timeline';
+import {mergeSyntheticChunks,projectItem,redactBoardTokens,simplifyItem} from './timeline';
 import {withDaemonRead} from './daemon-health';
 type Page=Awaited<ReturnType<PaseoAgentTimelineHandle['refetch']>>;
 type Entry=Page['entries'][number];
@@ -24,7 +24,7 @@ export function exactTimelineText(entry:Entry):string {
  return redactBoardTokens(String(text??''));
 }
 export function timelineRows(page:Page,agent:string){
- return page.entries.flatMap(entry=>{const row=simplifyItem(entry);if(!row)return [];const exact=exactTimelineText(entry);const item=projectItem(entry,agent);return [{...row,id:encode([agent,page.epoch,entry.seqStart,entry.seqEnd]),truncated:row.primer?row.full!==exact:row.text!==exact,...(item?{item}:{})}];});
+ return mergeSyntheticChunks(page.entries).flatMap(entry=>{const row=simplifyItem(entry);if(!row)return [];const exact=exactTimelineText(entry);const item=projectItem(entry,agent);return [{...row,id:encode([agent,page.epoch,entry.seqStart,entry.seqEnd]),truncated:row.primer?row.full!==exact:row.text!==exact,...(item?{item}:{})}];});
 }
 export async function timelinePage(ref:PaseoAgentTimelineHandle,agent:string,limitValue:string|null,before:string|null){
  const limit=limitValue===null?80:Number(limitValue);if(!Number.isInteger(limit)||limit<1||limit>200)throw bad('Timeline limit must be an integer from1 to200');
@@ -36,13 +36,21 @@ export async function timelinePage(ref:PaseoAgentTimelineHandle,agent:string,lim
 // The exact row: resolved by seqStart, so a tool call whose seqEnd grew since the row
 // was listed (running -> completed) still opens. Text is capped at 1 MB.
 export const EXACT_ROW_CAP=1_000_000;
-export async function timelineRow(ref:PaseoAgentTimelineHandle,agent:string,id:string){
+// The timeline entry a row id names, as it is now (same resolution as timelineRow), with its
+// epoch: "Fork from here" cuts the conversation at its seqEnd (frame-fork.ts).
+export async function timelineEntry(ref:PaseoAgentTimelineHandle,agent:string,id:string):Promise<{epoch:string;entry:Entry}>{
  const c=decode(id,agent,4);const start=c[2]as number;
- const page=await withDaemonRead(()=>ref.refetch({direction:'after',cursor:{epoch:c[1]as string,seq:start-1},limit:1,projection:'projected'}));
+ // A row joined from synthetic-id chunks (mergeSyntheticChunks) spans several projected entries.
+ const span=Math.min(200,(c[3]as number)-start+1);
+ const page=await withDaemonRead(()=>ref.refetch({direction:'after',cursor:{epoch:c[1]as string,seq:start-1},limit:span,projection:'projected'}));
  if(page.error)throw bad(page.error,503,'TIMELINE_UNAVAILABLE');
  if(page.epoch!==c[1]||page.staleCursor||page.gap||page.reset)throw bad('Timeline changed. Refresh history before opening this row.',409,'TIMELINE_ROW_CHANGED');
- const entry=page.entries.find(e=>e.seqStart===start&&e.seqEnd>=(c[3]as number));
+ const entry=mergeSyntheticChunks(page.entries).find(e=>e.seqStart===start&&e.seqEnd>=(c[3]as number));
  if(!entry){if(page.entries.length)throw bad('Timeline row changed. Refresh history.',409,'TIMELINE_ROW_CHANGED');throw bad('Timeline row not found',404,'TIMELINE_ROW_NOT_FOUND');}
+ return {epoch:c[1]as string,entry};
+}
+export async function timelineRow(ref:PaseoAgentTimelineHandle,agent:string,id:string){
+ const {entry}=await timelineEntry(ref,agent,id);
  const row=simplifyItem(entry);if(!row)throw bad('Timeline row is not displayable',404,'TIMELINE_ROW_NOT_FOUND');
  // The item with generous bounds (64 KB per field) for the expanded view; text gets
  // the rest of the 1 MB budget.

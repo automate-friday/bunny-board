@@ -1,35 +1,32 @@
-// Starter prompt cards under an opening message (quickStartPrompts.ts): a labelled group of
-// equal cards, each an icon, a title and one line of detail, with "Show others" to rotate
-// them. Cards about the frame's own content come first ("Here"). "Smarter with AI" (off by
-// default) swaps in cards from an occasional model call; Show others goes back to local
-// ones. A click fills the message; it never sends. `layout="compact"` is the phone's
-// one-column list of up to three cards about this person's work (relevantStarters).
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
+// Next-step suggestions inside the empty opening-message box (quickStartPrompts.ts). While
+// the box is empty, up to three cards sit in it under the placeholder line: one icon for the
+// kind of step (the likely next request, something to check, a new idea), the action, and a
+// line saying what prompted it. A click fills the message; it never sends. Typing in the
+// box (or naming the agent) removes them; an empty box brings them back. Every card comes
+// from the suggestion model (server/quick-starts-ai.ts); there are no fixed or replayed
+// cards. Two small controls share the placeholder line: more suggestions, and a switch that
+// turns them off (then nothing is sent). The empty-board hint, which has no message box,
+// shows the same cards as a plain list (QuickStartList).
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { B, UI_FONT } from "./bunnyTheme";
 import type { Editor } from "tldraw";
 import { pageContext } from "./pageContext";
-import { aiCache, aiEnabled, fetchAiStarters, ghostIdeas, type PageContext, pageStarters, promptHistory, relevantStarters, setAiEnabled, suggestStarters, type Starter, type StarterKind, withAiStarters, withPageStarters } from "./quickStartPrompts";
+import { aiEnabled, askAllowed, cachedIdeas, contextKey, fetchIdeas, lastError, noteShown, notePicked, type PageContext, pageOf, promptHistory, setAiEnabled, type Starter, type StarterSlot } from "./quickStartPrompts";
 
-const TINT: Record<StarterKind, { bg: string; fg: string }> = {
-  plan: { bg: "light-dark(#FEF3C7, #4a3f1d)", fg: "light-dark(#A16207, #fcd34d)" },
-  build: { bg: "light-dark(#DCFCE7, #1f3f2b)", fg: "light-dark(#15803D, #86efac)" },
-  research: { bg: "light-dark(#DBEAFE, #1e3150)", fg: "light-dark(#1D4ED8, #93c5fd)" },
-  review: { bg: "light-dark(#FFE4E6, #4a2329)", fg: "light-dark(#BE123C, #fda4af)" },
-  write: { bg: B.peachSoft, fg: "light-dark(#C2410C, #fdba74)" },
-  design: { bg: B.lavenderSoft, fg: B.violetDeep },
+const TINT: Record<StarterSlot, { bg: string; fg: string; label: string }> = {
+  next: { bg: "light-dark(#DCFCE7, #1f3f2b)", fg: "light-dark(#15803D, #86efac)", label: "Next step" },
+  check: { bg: "light-dark(#FFE4E6, #4a2329)", fg: "light-dark(#BE123C, #fda4af)", label: "Worth checking" },
+  idea: { bg: B.lavenderSoft, fg: B.violetDeep, label: "New idea" },
 };
 
 // Line icons in the board's emoji style (Emoji.tsx): 24-unit grid, currentColor strokes.
-const ICON: Record<StarterKind, ReactNode> = {
-  plan: <><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8 9h8M8 13h8M8 17h5" /></>,
-  build: <path d="M14.5 5.5a4 4 0 0 0-5 5L4 16l4 4 5.5-5.5a4 4 0 0 0 5-5l-2.5 2.5-2.5-.5-.5-2.5z" />,
-  research: <><circle cx="10.5" cy="10.5" r="5.5" /><path d="M15 15l5 5" /></>,
-  review: <><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" /><path d="M9 12l2 2 4-4" /></>,
-  write: <><path d="M5 19l1-4L16 5l3 3L9 18z" /><path d="M14 7l3 3" /></>,
-  design: <><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="16" height="7" rx="1.5" /></>,
-};
-const RECENT_ICON = <><path d="M4 12a8 8 0 1 0 2.3-5.7" /><path d="M4 4v4h4" /><path d="M12 8v4l3 2" /></>;
 const SPARK = <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM18.5 15l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z" />;
+const ICON: Record<StarterSlot, ReactNode> = {
+  next: <><path d="M5 12h13" /><path d="M13 6l6 6-6 6" /></>,
+  check: <><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" /><path d="M9 12l2 2 4-4" /></>,
+  idea: SPARK,
+};
+const AGAIN = <><path d="M20 12a8 8 0 1 1-2.3-5.7" /><path d="M20 4v4h-4" /></>;
 
 function Icon({ children, size = 14 }: { children: ReactNode; size?: number }) {
   return (
@@ -40,108 +37,168 @@ function Icon({ children, size = 14 }: { children: ReactNode; size?: number }) {
 }
 
 const CSS = `
-.bqs button.bqs-card{min-width:0;display:flex;gap:10px;align-items:center;text-align:left;border:1px solid ${B.line};background:light-dark(#fff,var(--bunny-surface));border-radius:12px;padding:9px 11px;box-sizing:border-box;cursor:pointer;color:${B.espresso};font:inherit;transition:border-color .12s,background .12s,box-shadow .12s}
-.bqs button.bqs-card:hover:not(:disabled){border-color:${B.lavender};background:light-dark(#FBF9FF,var(--bunny-surface));box-shadow:0 1px 3px rgba(46,31,22,.06)}
+.bqs button.bqs-card{min-width:0;width:100%;display:flex;gap:9px;align-items:center;text-align:left;border:1px solid ${B.line};background:light-dark(#fff,var(--bunny-surface));border-radius:9px;padding:4px 9px;box-sizing:border-box;cursor:pointer;color:${B.espresso};font:inherit;transition:border-color .12s,background .12s}
+.bqs button.bqs-card:hover:not(:disabled){border-color:${B.lavender};background:light-dark(#FBF9FF,var(--bunny-surface))}
 .bqs button.bqs-card:focus-visible{outline:2px solid ${B.violet};outline-offset:1px}
-.bqs button.bqs-more{border:0;background:none;padding:2px 4px;border-radius:6px;cursor:pointer;color:${B.violetDeep};font:500 12px ${UI_FONT};display:inline-flex;align-items:center;gap:4px}
-.bqs button.bqs-more:hover:not(:disabled){background:${B.lavenderSoft}}
-.bqs-switch{position:relative;width:22px;height:12px;border-radius:999px;background:${B.line};transition:background .12s;flex:none}
-.bqs-switch>span{position:absolute;top:2px;left:2px;width:8px;height:8px;border-radius:50%;background:#fff;transition:left .12s}
-.bqs-switch[data-on]{background:${B.violet}}.bqs-switch[data-on]>span{left:12px}
+.bqs button.bqs-ctl{border:0;background:none;padding:0;border-radius:999px;cursor:pointer;color:${B.violetDeep};display:inline-grid;place-items:center}
+.bqs button.bqs-ctl:hover:not(:disabled){background:${B.lavenderSoft}}
+.bqs button.bqs-ctl:focus-visible{outline:2px solid ${B.violet};outline-offset:1px}
+.bqs button.bqs-ctl[aria-pressed=false]{color:${B.muted}}
+.bqs button.bqs-ctl:disabled{opacity:.5;cursor:default}
+.bqs-wait{border:1px solid ${B.line};border-radius:9px;box-sizing:border-box;background:light-dark(#fff,var(--bunny-surface));opacity:.55;animation:bqs-wait 1.4s ease-in-out infinite}
+@keyframes bqs-wait{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.bqs-wait{animation:none}}
 `;
 const ellipsis: CSSProperties = { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
 
-// The suggestion inputs a start form shares between its cards and its ghost typewriter:
-// the person's history, the page around the frame, and (when on) the AI cards. The AI call
-// waits until the form has sat idle (`idle`), so a quick start never triggers one.
+// What a start form's suggestions run on: the cards for this frame (from the cache at once,
+// then from the model), paging for "more", and the switch. `active` is whether the form is
+// open: nothing is read or asked before that. `count` is how many cards show at a time.
+const ASK_DELAY_MS = 400;
 export type QuickStartData = ReturnType<typeof useQuickStartData>;
-export function useQuickStartData({ editor, frameId, idle = true }: { editor?: Editor; frameId?: string | null; idle?: boolean }) {
-  const history = useMemo(() => promptHistory(), []);
-  const context = useMemo<PageContext | null>(() => (editor && frameId ? pageContext(editor, frameId) : null), [editor, frameId]);
+export function useQuickStartData({ editor, frameId, active = true, count = 3 }: { editor?: Editor; frameId?: string | null; active?: boolean; count?: number }) {
+  const history = useMemo(() => promptHistory(), [active]);
+  const context = useMemo<PageContext | null>(() => (active && editor ? pageContext(editor, frameId ?? null) : null), [active, editor, frameId]);
+  const key = useMemo(() => contextKey(history, context), [history, context]);
   const [ai, setAi] = useState(aiEnabled);
-  const [aiCards, setAiCards] = useState<Starter[] | null>(() => (aiEnabled() ? aiCache()?.starters ?? null : null));
-  const [aiBusy, setAiBusy] = useState(false);
-  const learnable = history.length > 0 || !!context?.stickies.length || !!context?.frame;
+  const on = ai && active;
+  // Everything below belongs to one frame context (`key`): a new context starts over from
+  // its cached cards. `attempt` is bumped by "more" after a call that gave nothing.
+  const fresh = useMemo(() => ({ key, more: null as Starter[] | null, page: 0, failed: false, error: "", attempt: 0 }), [key]);
+  const [held, setHeld] = useState(fresh);
+  const view = held.key === key ? held : fresh;
+  const patch = useCallback((p: Partial<typeof fresh>) => setHeld((v) => ({ ...(v.key === key ? v : fresh), ...p })), [key, fresh]);
+  const cached = useMemo(() => (on ? cachedIdeas(key) : []), [on, key]);
+  const ideas = view.more ?? cached;
+  const [busy, setBusy] = useState(false);
+  const { cards, needMore } = useMemo(() => pageOf(ideas, count, view.page, !view.failed), [ideas, count, view.page, view.failed]);
   useEffect(() => {
-    if (!ai || !idle || !learnable) return;
+    if (!on || !needMore) return;
+    // A call for this context gave nothing a moment ago: wait for "more" or the hold-off.
+    if (!view.attempt && !askAllowed(key)) return patch({ failed: true, error: lastError(key) });
     let live = true;
-    setAiBusy(true);
-    fetchAiStarters(history, context).then((cards) => { if (live) { if (cards?.length) setAiCards(cards); setAiBusy(false); } });
-    return () => { live = false; };
-  }, [ai, idle, learnable, history, context]);
-  const toggleAi = () => {
-    setAiEnabled(!ai);
-    setAi(!ai);
-  };
-  const ideas = useMemo(() => ghostIdeas(history, context, ai ? aiCards : null), [history, context, ai, aiCards]);
-  return { history, context, ai, aiCards: ai ? aiCards : null, aiBusy, learnable, toggleAi, ideas };
+    setBusy(true);
+    // A form that is opened and closed again straight away never asks.
+    const t = setTimeout(() => {
+      void fetchIdeas(key, history, context, { frameId: frameId ?? null }).then((r) => {
+        if (!live) return;
+        patch("ideas" in r ? { more: r.ideas, error: "" } : { failed: true, error: r.error });
+        setBusy(false);
+      });
+    }, ASK_DELAY_MS);
+    return () => {
+      live = false;
+      clearTimeout(t);
+      setBusy(false);
+    };
+  }, [on, needMore, key, history, context, frameId, view.attempt, patch]);
+  const toggleAi = useCallback(() => {
+    setAi((was) => {
+      setAiEnabled(!was);
+      return !was;
+    });
+  }, []);
+  // The next cards; after a call that gave nothing, one more try.
+  const more = useCallback(() => patch(view.failed && !cards.length ? { failed: false, attempt: view.attempt + 1 } : { page: view.page + 1 }), [patch, view.failed, view.page, view.attempt, cards.length]);
+  // Why there are no cards, when a call gave none.
+  const note = on && view.failed && !cards.length && !busy ? view.error : "";
+  return { ai, cards: on ? cards : [], busy: on && busy, note, count, toggleAi, more };
 }
 
-export function QuickStarts({ onPick, layout = "grid", heading, data }: { onPick: (s: Starter) => void; layout?: "grid" | "compact"; heading?: string; data: QuickStartData }) {
-  const { history, context, ai, aiCards, aiBusy, learnable, toggleAi } = data;
-  const [page, setPage] = useState(0);
-  const compact = layout === "compact";
-  // Phone: a short list about this person's work only (relevantStarters), one card per row so
-  // each title reads in full.
-  const local = useMemo(() => (compact ? relevantStarters(history, context, 3, page) : withPageStarters(suggestStarters(history, 4, page), page === 0 ? pageStarters(context) : [])), [compact, history, context, page]);
-  const showAi = page === 0 && !!aiCards?.length;
-  const list = showAi && aiCards ? withAiStarters(local, aiCards, compact ? 3 : 4) : local;
-  const title = heading ?? (showAi ? "For you · AI" : local.some((s) => s.badge === "page") ? "For this frame" : local.some((s) => s.badge === "recent") ? "For you" : "Suggested");
+function Card({ s, compact, onPick }: { s: Starter; compact: boolean; onPick: (s: Starter) => void }) {
+  const slot: StarterSlot = s.slot && s.slot in TINT ? s.slot : "next";
+  const tint = TINT[slot];
   return (
-    <section className="bqs" data-testid="quick-starts" aria-label="Suggested prompts" style={{ display: "flex", flexDirection: "column", gap: compact ? 6 : 8, minWidth: 0, font: `13px/1.35 ${UI_FONT}` }}>
-      <style>{CSS}</style>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, font: `600 11px ${UI_FONT}`, letterSpacing: ".04em", textTransform: "uppercase", color: B.muted, whiteSpace: "nowrap" }}>
-          <Icon size={12}>{SPARK}</Icon>
-          {title}
-        </span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
-        {learnable ? (
-          <button type="button" className="bqs-more" data-testid="quick-starts-ai" aria-pressed={ai} onClick={() => { toggleAi(); setPage(0); }} title={ai ? "On: when you pause, at most once every 4 hours, your recent opening messages and this frame's stickies go to a small Claude model (Haiku) for tailored starters. Click to turn off." : "Off. Turn on for tailored starters: when you pause, at most once every 4 hours, your recent opening messages and this frame's stickies go to a small Claude model (Haiku)."} style={ai ? undefined : { color: B.muted }}>
-            <span aria-hidden className="bqs-switch" data-on={ai || undefined}><span /></span>
-            {aiBusy ? "Thinking…" : compact ? "AI" : "Smarter with AI"}
-          </button>
-        ) : null}
-        <button type="button" className="bqs-more" data-testid="quick-starts-more" onClick={() => setPage((p) => p + 1)} aria-label="Show other suggestions">
-          <Icon size={12}><path d="M20 12a8 8 0 1 1-2.3-5.7" /><path d="M20 4v4h-4" /></Icon>
-          {compact ? null : "Show others"}
-        </button>
-        </span>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: compact ? "minmax(0, 1fr)" : "repeat(2, minmax(0, 1fr))", gap: compact ? 6 : 8 }}>
-        {list.map((s) => {
-          const tint = s.badge === "recent" || s.badge === "ai" ? { bg: B.lavenderSoft, fg: B.violetDeep } : TINT[s.kind];
-          const icon = s.badge === "recent" ? RECENT_ICON : s.badge === "ai" ? SPARK : ICON[s.kind];
-          const tag = s.badge === "recent" ? "Recent" : s.badge === "page" ? "Here" : null;
-          return (
-            <button key={s.prompt} type="button" className="bqs-card" data-testid="quick-start" data-kind={s.kind} data-badge={s.badge} title={s.prompt} onClick={() => onPick(s)} style={compact ? { padding: "7px 10px", gap: 10, minHeight: 48 } : undefined}>
-              <span style={{ width: 26, height: 26, borderRadius: 8, flex: "none", display: "grid", placeItems: "center", background: tint.bg, color: tint.fg }}>
-                <Icon size={14}>{icon}</Icon>
-              </span>
-              <span style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
-                  <b style={{ ...ellipsis, fontWeight: 600, fontSize: compact ? 14 : 13 }}>{s.title}</b>
-                  {tag && !compact ? <span style={{ flex: "none", font: `600 10px ${UI_FONT}`, color: B.violetDeep, background: B.lavenderSoft, borderRadius: 5, padding: "0 5px", lineHeight: "15px" }}>{tag}</span> : null}
-                </span>
-                <span style={{ ...ellipsis, fontSize: 12, color: B.muted }}>{s.detail}</span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </section>
+    <button type="button" className="bqs-card" data-testid="quick-start" data-slot={slot} title={`${tint.label}: ${s.prompt}`} onClick={() => { notePicked(s.title); onPick(s); }} style={{ height: compact ? ROW.compact : ROW.list }}>
+      <span style={{ width: 22, height: 22, borderRadius: 8, flex: "none", display: "grid", placeItems: "center", background: tint.bg, color: tint.fg }}>
+        <Icon size={13}>{ICON[slot]}</Icon>
+      </span>
+      <span style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+        <b style={{ ...ellipsis, fontWeight: 600, fontSize: compact ? 14 : 13 }}>{s.title}</b>
+        {s.detail ? <span style={{ ...ellipsis, fontSize: 12, color: B.muted }}>{s.detail}</span> : null}
+      </span>
+    </button>
   );
 }
 
-// Under the message box while a ghost idea shows: what Tab does, and a button for touch.
-export function GhostUse({ onUse }: { onUse: () => void }) {
+function Controls({ data, compact }: { data: QuickStartData; compact: boolean }) {
+  const { ai, cards, busy, toggleAi, more } = data;
+  const size = compact ? 40 : 32;
   return (
-    <div className="bqs" data-testid="ghost-use" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, marginTop: -4, font: `12px ${UI_FONT}`, color: B.muted }}>
-      <style>{CSS}</style>
-      <span>Idea for this frame</span>
-      <button type="button" className="bqs-more" data-testid="ghost-use-btn" onClick={onUse}>
-        Use it <kbd style={{ font: `600 10px ${UI_FONT}`, border: `1px solid ${B.line}`, borderRadius: 4, padding: "0 4px", color: B.muted }}>Tab</kbd>
+    <>
+      {ai ? (
+        <button type="button" className="bqs-ctl" data-testid="quick-starts-more" onClick={more} disabled={busy} aria-label="Other suggestions" title={cards.length ? "Other suggestions" : "Suggest again"} style={{ width: size, height: size }}>
+          <Icon size={compact ? 16 : 13}>{AGAIN}</Icon>
+        </button>
+      ) : null}
+      <button type="button" className="bqs-ctl" data-testid="quick-starts-ai" aria-pressed={ai} aria-label="Suggestions" onClick={toggleAi} title={ai ? "Suggestions are on: your recent opening messages, this frame and the frames near it (names, stickies, what their agents reported) and the workspace's recent commits go to a small Claude model, which suggests what to ask next. Click to turn off." : "Suggestions are off: nothing is sent. Click to have a small Claude model read your recent requests, the frames near this one and the workspace, and suggest what to ask next."} style={{ width: size, height: size }}>
+        <Icon size={compact ? 16 : 13}>{SPARK}</Icon>
       </button>
+    </>
+  );
+}
+
+// Card and placeholder-line heights (desktop list, phone compact).
+const ROW = { list: 44, compact: 48 };
+const TOP = { list: 36, compact: 44 };
+const GAP = 4;
+
+// Wraps a start form's message box and lays the suggestions inside it. `show`: the box is
+// empty and nothing else has been typed. `children` renders the box itself with the height
+// the cards need; once grown it stays that tall, so typing does not make the form jump.
+// `insetRight` keeps the controls clear of something else in the box's top-right corner.
+export function SuggestField({ data, show, onPick, layout = "list", insetRight = 0, className, children }: { data: QuickStartData; show: boolean; onPick: (s: Starter) => void; layout?: "list" | "compact"; insetRight?: number; className?: string; children: (minHeight: number | undefined) => ReactNode }) {
+  const { ai, cards, busy, count } = data;
+  const compact = layout === "compact";
+  const waiting = show && ai && busy && cards.length < count;
+  const rows = show && ai ? (waiting ? count : cards.length) : 0;
+  const need = rows ? TOP[layout] + rows * ROW[layout] + (rows - 1) * GAP + 8 : 0;
+  const [tall, setTall] = useState(0);
+  useEffect(() => { if (need > tall) setTall(need); }, [need, tall]);
+  const titles = show ? cards.map((s) => s.title).join("\n") : "";
+  useEffect(() => { if (titles) noteShown(titles.split("\n")); }, [titles]);
+  return (
+    <div className={`bqs${className ? ` ${className}` : ""}`} data-testid="suggest-field" style={{ position: "relative", font: `13px/1.35 ${UI_FONT}` }}>
+      <style>{CSS}</style>
+      {children(Math.max(tall, need) || undefined)}
+      {show ? (
+        <>
+          <span style={{ position: "absolute", top: 2, right: 6 + insetRight, display: "inline-flex", alignItems: "center", gap: 2 }}>
+            <Controls data={data} compact={compact} />
+          </span>
+          {!rows && data.note ? (
+            <span data-testid="quick-starts-note" role="status" title={data.note} style={{ ...ellipsis, position: "absolute", left: 12, right: 12, top: TOP[layout] + 2, fontSize: 12, color: B.muted, pointerEvents: "none" }}>
+              {data.note}
+            </span>
+          ) : null}
+          {rows ? (
+            <div data-testid="quick-starts" aria-label="Suggested next steps" aria-busy={waiting || undefined} style={{ position: "absolute", left: 8, right: 8, top: TOP[layout], display: "flex", flexDirection: "column", gap: GAP, pointerEvents: "none" }}>
+              {cards.map((s) => <span key={s.prompt} style={{ display: "flex", pointerEvents: "auto" }}><Card s={s} compact={compact} onPick={onPick} /></span>)}
+              {waiting ? Array.from({ length: count - cards.length }, (_, i) => <div key={i} className="bqs-wait" data-testid="quick-start-wait" style={{ height: ROW[layout] }} />) : null}
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </div>
+  );
+}
+
+// The same cards as a plain list, for the empty-board hint (which has no message box).
+export function QuickStartList({ data, onPick, layout = "list" }: { data: QuickStartData; onPick: (s: Starter) => void; layout?: "list" | "compact" }) {
+  const { ai, cards, busy, count } = data;
+  const compact = layout === "compact";
+  const waiting = ai && busy && cards.length < count;
+  const titles = cards.map((s) => s.title).join("\n");
+  useEffect(() => { if (titles) noteShown(titles.split("\n")); }, [titles]);
+  return (
+    <section className="bqs" data-testid="quick-starts" aria-label="Suggested next steps" aria-busy={waiting || undefined} style={{ display: "flex", flexDirection: "column", gap: GAP, minWidth: 0, font: `13px/1.35 ${UI_FONT}` }}>
+      <style>{CSS}</style>
+      {cards.map((s) => <Card key={s.prompt} s={s} compact={compact} onPick={onPick} />)}
+      {waiting ? Array.from({ length: count - cards.length }, (_, i) => <div key={i} className="bqs-wait" data-testid="quick-start-wait" style={{ height: ROW[layout] }} />) : null}
+      {data.note ? <span data-testid="quick-starts-note" role="status" title={data.note} style={{ ...ellipsis, fontSize: 12, color: B.muted }}>{data.note}</span> : null}
+      <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", gap: 2 }}>
+        <Controls data={data} compact={compact} />
+      </span>
+    </section>
   );
 }

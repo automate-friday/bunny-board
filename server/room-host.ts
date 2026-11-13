@@ -291,6 +291,17 @@ export class BoardRoom {
     });
   }
 
+  // An out-of-band message to every connected browser (not a document change: nothing is
+  // saved or synced). Returns how many browsers it went to. Used by server/frame-snapshots.ts.
+  broadcast(data: unknown): number {
+    let sent = 0;
+    for (const sessionId of this.sessions.keys()) {
+      try { this.room.sendCustomMessage(sessionId, data); sent++; }
+      catch { /* that session is closing; the others still get it */ }
+    }
+    return sent;
+  }
+
   // --- writes ------------------------------------------------------------------
 
   // Synchronous, attributed write. Records are validated against the schema.

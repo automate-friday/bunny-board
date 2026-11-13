@@ -66,8 +66,10 @@ export function frameAtTap<T extends { id: string; bound: boolean; x: number; y:
 // The tiles home: Pinned (in pin order; with nothing pinned, the `fallback` most recent),
 // Recent (the last-interaction row, newest first) and every frame not in the Pinned grid,
 // most recent first (then waiting-on-you, then agents, then by name).
-export function tileSections<T extends { id: string; agentId: string; rawStatus: string; name: string }>(frames: readonly T[], pins: readonly string[], touched: ReadonlyMap<string, number>, recentMax = 10, fallback = 6): { pinned: T[]; pinnedFallback: boolean; recent: T[]; rest: T[] } {
-  const byId = new Map(frames.map((f) => [f.id, f]));
+// `pool`: where pins are looked up. Pins are the board's (pins.ts), on any page, so the home's
+// Pinned row shows them all even when the tiles below are one page's.
+export function tileSections<T extends { id: string; agentId: string; rawStatus: string; name: string }>(frames: readonly T[], pins: readonly string[], touched: ReadonlyMap<string, number>, recentMax = 10, fallback = 6, pool: readonly T[] = frames): { pinned: T[]; pinnedFallback: boolean; recent: T[]; rest: T[] } {
+  const byId = new Map(pool.map((f) => [f.id, f]));
   const rank = (f: T) => (f.rawStatus === "needs-permission" ? 0 : f.agentId ? 1 : 2);
   const order = (a: T, b: T) => (touched.get(b.id) ?? -Infinity) - (touched.get(a.id) ?? -Infinity) || rank(a) - rank(b) || a.name.localeCompare(b.name);
   const byRecent = frames.filter((f) => touched.has(f.id)).sort(order);

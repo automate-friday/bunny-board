@@ -20,7 +20,7 @@ import { Emoji } from "./Emoji";
 import { BunnyMark } from "./BunnyMark";
 import { ModelPicker } from "./ModelPicker";
 import { clearOfHeading, type ScreenRect, usePanelDock } from "./framePanelDock";
-import { PIN_LIMIT, usePins } from "./pins";
+import { rememberFrameStart } from "./jumpPaletteModel";
 import { Dot } from "./Dot";
 import { B, BUNNY_CONTROLS_CSS, DOT, chip, fieldLabel, iconBtn, menuItem, primaryBtn, softBtn, surface } from "./bunnyTheme";
 import { FALLBACK_PROVIDERS, effortFor, fallbackCatalogue, rememberedChoice, type StartCatalogue, withCustomModels } from "../../shared/start-catalogue";
@@ -29,9 +29,9 @@ import { CLOUD_PROVIDERS, CLOUD_PROVIDER_LABEL, frameCloudProvider, type CloudPr
 import { infoNow } from "./info";
 import { MobileCtx } from "./mobile/mobileMode";
 import { askStartSheet } from "./mobile/StartSheet";
-import { GhostUse, QuickStarts, useQuickStartData } from "./QuickStarts";
-import { useGhostIdea, useIdle } from "./ghostIdea";
+import { SuggestField, useQuickStartData } from "./QuickStarts";
 import { recordOpeningPrompt, takePendingPrompt } from "./quickStartPrompts";
+import { modEnterHint, modEnterSubmits } from "./submitShortcut";
 
 const panelBase: React.CSSProperties = {
   ...surface,
@@ -80,9 +80,8 @@ const divider = <div style={{ height: 1, background: B.line, margin: "4px 6px" }
 export const startRequested = new Set<string>();
 
 // Toolbar shown when exactly one frame is selected: one compact row (status, name, the main
-// action for unbound frames, pin, ⋯ for everything else). Unpinned frames float near the top
-// or dock bottom-right (minimizable to a pill). The pin button pins the frame in the frame
-// tabs (FrameTabs.tsx, pins.ts).
+// action for unbound frames, ⋯ for everything else). It floats near the top or docks
+// bottom-right (minimizable to a pill). Pinning lives in the frame tabs (FrameTabs.tsx).
 export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; boardId: string; onOpen: () => void }) {
   const editor = useEditor();
   const live = useValue("frame", () => editor.getShape(frame.id) as TLFrameShape | undefined, [editor, frame.id]);
@@ -98,7 +97,6 @@ export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; bo
   const paused = useValue("frame-panel-paused", () => boardLocks(editor).get().agentsPaused, [editor]);
   const [dock, setDock] = usePanelDock();
   const docked = dock !== "float";
-  const [pins, togglePin] = usePins(editor, boardId);
   // Floating near the frame (phones: full width under the header), or docked bottom-right.
   const panel: React.CSSProperties = docked ? (narrow ? dockedPanelNarrow : dockedPanel) : narrow ? { ...panelBase, left: 8, right: 8, top: 58, transform: "none", maxWidth: "none", maxHeight:"calc(100dvh - 74px)", overflowY:"auto" } : panelBase;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -126,17 +124,25 @@ export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; bo
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") return;
       e.stopPropagation();
-      // Tab in the empty opening message takes the ghost idea (React never sees this key).
-      if (e.key === "Tab" && !e.shiftKey && ghost.idea && !line && (e.target as HTMLElement | null)?.dataset?.testid === "opening-line") {
+      // Tab in the empty opening message takes the first suggestion (React never sees this key).
+      if (e.key === "Tab" && !e.shiftKey && firstIdea && !line && (e.target as HTMLElement | null)?.dataset?.testid === "opening-line") {
         e.preventDefault();
-        setLine(ghost.idea);
+        setLine(firstIdea);
+      }
+      // ⌘↵ / Ctrl+↵ in the start form is the Start button; plain Enter stays a new line. Not
+      // inside the model/effort popovers (a typed custom model would be dropped) and not on
+      // another button (Cancel, a quick-start card), which keep their own meaning.
+      const t = e.target as HTMLElement | null;
+      if (modEnterSubmits(e) && t?.closest?.('[data-testid="start-form"]') && !t.closest('[data-testid="provider-menu"], [data-testid="effort-menu"]') && (t.tagName !== "BUTTON" || t.dataset.testid === "start-go")) {
+        e.preventDefault();
+        launch();
       }
     };
     panelEl.addEventListener("keydown", onKey);
     return () => panelEl.removeEventListener("keydown", onKey);
   });
   // A frame the phone shell's Start agent just drew opens straight on the start form.
-  const [mode, setMode] = useState<"idle" | "start" | "restart" | "unbind">(() => (startRequested.delete(frame.id) ? "start" : "idle"));
+  const [mode, setMode] = useState<"idle" | "start">(() => (startRequested.delete(frame.id) ? "start" : "idle"));
   // The panel stays mounted when the selection moves to another frame (a conversation's + New
   // agent selects the frame it drew): pick up its request then too.
   useEffect(() => {
@@ -150,11 +156,6 @@ export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; bo
       setMode("idle");
     }
   }, [mobile, mode, frame.id]);
-  const [unbinding, setUnbinding] = useState(false);
-  const [archiveOld, setArchiveOld] = useState(false);
-  const [restarting, setRestarting] = useState(false);
-  const restartBusy = useRef(false);
-  const [forking, setForking] = useState(false);
   const [catalogue, setCatalogue] = useState<StartCatalogue | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
   // Reasoning effort (Paseo thinkingOptionId); null is the model's default.
@@ -162,10 +163,13 @@ export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; bo
   // Model ids typed into the picker, remembered on this device.
   const [custom, setCustom] = useState(customModels);
   const [line, setLine] = useState("");
-  // Starter cards and, after a quiet 10 s, ghost ideas typed into the empty message box.
-  const untouched = mode === "start" && !mobile && !line.trim();
-  const quick = useQuickStartData({ editor, frameId: frame.id, idle: useIdle(untouched) });
-  const ghost = useGhostIdea(quick.ideas, untouched);
+  // Next-step suggestions sit inside the message box while it is empty and the frame has not
+  // been renamed since the form opened (naming it is the person saying what they want).
+  const quick = useQuickStartData({ editor, frameId: frame.id, active: mode === "start" && !mobile });
+  const nameAtOpen = useRef(frame.props.name);
+  useEffect(() => { if (mode === "start") nameAtOpen.current = frame.props.name; }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  const suggesting = mode === "start" && !mobile && !line.trim() && frame.props.name === nameAtOpen.current;
+  const firstIdea = suggesting ? quick.cards[0]?.prompt : undefined;
   // A starter chosen on the empty-board hint opens this frame's start form with it filled.
   // (The phone's start sheet takes the starter itself.)
   useEffect(() => {
@@ -250,7 +254,6 @@ export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; bo
 
   const closeMenu = () => {
     setMenuOpen(false);
-    setMode((m) => (m === "unbind" || m === "restart" ? "idle" : m));
   };
   useEffect(() => {
     if (!menuOpen) return;
@@ -276,6 +279,8 @@ export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; bo
   const name = live.props.name || "Frame";
 
   const writeRequest = (request: Record<string, unknown>) => {
+    // Starting counts as your first message (frame tabs' Recent puts it at the top).
+    rememberFrameStart(live.id);
     editor.updateShape<TLFrameShape>({
       id: live.id,
       type: "frame",
@@ -284,6 +289,17 @@ export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; bo
     });
     setMode("idle");
     onOpen();
+  };
+
+  // Start (button or ⌘↵): one request; the frame's request is written synchronously, so a
+  // second press before the form closes finds it and does nothing.
+  const startDisabled = !provider || (!!startHost && !startHosts.some((h) => h.host === startHost && h.enabled));
+  const launch = () => {
+    // biome-ignore lint/suspicious/noExplicitAny: meta JSON.
+    if (!provider || startDisabled || (editor.getShape(live.id)?.meta as any)?.paseo?.request) return;
+    recordOpeningPrompt(line);
+    rememberStartChoice({ provider, effort });
+    writeRequest({ kind: "create", provider, ...(effort ? { thinkingOptionId: effort } : {}), prompt: line || undefined, ...runsOnRequest(ephemeral ? false : cloud, cloudProvider, startHost) });
   };
 
   const bound = !!paseo.agentId;
@@ -299,8 +315,6 @@ export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; bo
       : "no conversation yet";
   const needsLook = !!paseo.pendingDeltas || (bound && paused) || !!err;
 
-  const pinned = pins.includes(live.id);
-  const pinsFull = !pinned && pins.length >= PIN_LIMIT;
   if (dock === "pill") {
     return (
       <button
@@ -328,19 +342,6 @@ export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; bo
       {/* Pushes the actions to the right edge when the panel is wider than the header (start form open). */}
       <span aria-hidden style={{ flex: "1 1 0", minWidth: 0 }} />
       {primary}
-      <button
-        type="button"
-        className="bfp-icon"
-        data-testid="frame-pin"
-        aria-pressed={pinned}
-        title={pinned ? "Unpin this frame" : pinsFull ? `Pins are full (${PIN_LIMIT}): unpin one first` : "Pin this frame to the frame tabs (on every device)"}
-        aria-label={pinned ? `Unpin ${name}` : `Pin ${name}`}
-        disabled={pinsFull}
-        style={{ ...iconBtn, background: pinned ? B.lavenderSoft : "transparent", color: pinned ? B.violetDeep : B.muted, opacity: pinsFull ? 0.4 : 1 }}
-        onClick={() => togglePin(live.id)}
-      >
-        <PinIcon filled={pinned} />
-      </button>
       <button
         type="button"
         className="bfp-icon"
@@ -406,139 +407,6 @@ export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; bo
     </div>
   );
 
-  if (bound && !paseo.request) {
-    const setDeltaMode = (m: string) => editor.updateShape<TLFrameShape>({ id: live.id, type: "frame", meta: { ...live.meta, paseo: { ...paseo, mode: m } } });
-    const linked = !!paseo.linked;
-    const restart = async () => {
-      if (restartBusy.current || !capabilities.can("restartWithTools") || paseo.host) return;
-      restartBusy.current = true;
-      setRestarting(true);
-      setErr(null);
-      try {
-        const r = await api<{ agentId: string; oldAgentId: string; archivedOld: boolean }>(`/api/ui/boards/${encodeURIComponent(boardId)}/frames/${encodeURIComponent(live.id)}/restart`, {
-          method: "POST",
-          body: JSON.stringify({ archiveOld }),
-        });
-        setMode("idle");
-        setMenuOpen(false);
-        ui.toast(`Restarted with board tools as a new agent${r.archivedOld ? "; the old conversation was archived" : "; the old conversation is still in Paseo"}.`);
-        onOpen();
-      } catch (e) {
-        setErr((e as Error).message);
-      } finally {
-        restartBusy.current = false;
-        setRestarting(false);
-      }
-    };
-    // A new sibling frame and agent that start from this conversation (server/frame-fork.ts).
-    const fork = async () => {
-      if (forking || paseo.host) return;
-      setForking(true);
-      setErr(null);
-      try {
-        await api<{ frameId: string }>(`/api/ui/boards/${encodeURIComponent(boardId)}/frames/${encodeURIComponent(live.id)}/fork`, { method: "POST", body: "{}" });
-        setMenuOpen(false);
-        ui.toast("Forked into a new frame beside this one; its agent starts from this conversation.");
-      } catch (e) {
-        setErr((e as Error).message);
-      } finally {
-        setForking(false);
-      }
-    };
-    const busy = paseo.status === "running" || paseo.status === "needs-permission";
-    return shell(
-      <>
-        {/* No "Open conversation": selecting the frame already opens it in the sidebar. */}
-        {header(null)}
-        {menu(
-          <>
-            {paseo.pendingDeltas ? (
-              <button type="button" className="bfp-item" style={{ ...menuItem, color: B.orange, fontWeight: 600 }} onClick={() => editor.updateShape<TLFrameShape>({ id: live.id, type: "frame", meta: { ...live.meta, paseoFlushAt: Date.now() } })}>
-                ↑ Send {paseo.pendingDeltas} change{paseo.pendingDeltas > 1 ? "s" : ""}
-              </button>
-            ) : null}
-            <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "4px 10px" }}>
-              <span style={fieldLabel}>Send changes</span>
-              <select aria-label="When to send frame changes" title="Live sends automatically; manual waits for Send changes; on-demand lets the agent read queued changes." value={paseo.mode ?? "live"} onChange={(e) => setDeltaMode(e.target.value)}>
-                <option value="live">Live (automatic)</option>
-                {linked ? null : <option value="on-demand">On demand (agent reads)</option>}
-                <option value="manual">Manual (I send)</option>
-              </select>
-            </label>
-            {divider}
-            {sharedItems}
-            {divider}
-            {!paseo.host ? (
-              <button type="button" className="bfp-item" style={menuItem} data-testid="fork-frame" disabled={forking} onClick={() => void fork()} title="Start a new agent in a new frame beside this one, from this conversation so far; this frame keeps going">
-                {forking ? "Forking…" : "Fork to new frame"}
-              </button>
-            ) : null}
-            {linked && !paseo.host && capabilities.can("restartWithTools") && mode !== "restart" ? (
-              <button
-                type="button"
-                className="bfp-item"
-                style={menuItem}
-                data-testid="restart-with-tools"
-                disabled={busy}
-                onClick={() => setMode("restart")}
-                title={busy ? "The conversation is working; stop it or let it finish first" : "Start a fresh agent in the same workspace with the board tools, handing over this conversation's last message"}
-              >
-                Restart with board tools
-              </button>
-            ) : null}
-            {mode === "restart" ? (
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: "6px 10px" }}>
-                <label style={{ display: "inline-flex", gap: 6, alignItems: "center", flex: "1 1 auto" }}>
-                  <input type="checkbox" data-testid="restart-archive-old" checked={archiveOld} onChange={(e) => setArchiveOld(e.target.checked)} /> Archive the old one
-                </label>
-                <button type="button" style={softBtn} onClick={() => setMode("idle")} disabled={restarting}>
-                  Cancel
-                </button>
-                <button type="button" className="bfp-primary" style={primaryBtn} data-testid="restart-go" disabled={restarting || !capabilities.can("restartWithTools")} onClick={() => void restart()}>
-                  {restarting ? "Restarting…" : "Restart"}
-                </button>
-              </div>
-            ) : null}
-            {mode === "unbind" ? (
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: "6px 10px" }}>
-                <span style={{ flexBasis: "100%", fontSize: 12 }}>The conversation stays in Paseo; this becomes a plain frame.</span>
-                <span style={{ flex: 1 }} />
-                <button type="button" style={softBtn} onClick={() => setMode("idle")} disabled={unbinding}>
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  style={{ ...primaryBtn, background: "#C2410C", borderColor: "light-dark(#C2410C, hsl(17 35% 39%))" }}
-                  data-testid="unbind-go"
-                  disabled={unbinding}
-                  onClick={() => {
-                    setUnbinding(true);
-                    setErr(null);
-                    api(`/api/ui/boards/${encodeURIComponent(boardId)}/frames/${encodeURIComponent(live.id)}/unbind`, { method: "POST", body: "{}" })
-                      .then(() => {
-                        setMode("idle");
-                        setMenuOpen(false);
-                        ui.toast("Unbound. The conversation is still in Paseo.");
-                      })
-                      .catch((e: Error) => setErr(e.message))
-                      .finally(() => setUnbinding(false));
-                  }}
-                >
-                  {unbinding ? "Unbinding…" : "Unbind"}
-                </button>
-              </div>
-            ) : paseo.status !== "requested" ? (
-              <button type="button" className="bfp-item bfp-danger" style={{ ...menuItem, color: B.danger }} data-testid="unbind" onClick={() => setMode("unbind")} title="Detach this frame from its conversation (the agent keeps running in Paseo)">
-                Unbind
-              </button>
-            ) : null}
-            {errLine}
-          </>,
-        )}
-      </>,
-    );
-  }
-
   if (paseo.request) {
     return shell(
       <>
@@ -596,18 +464,20 @@ export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; bo
               }}
             />
           </div>
-          <textarea
-            data-testid="opening-line"
-            style={{ width: "100%", display: "block", margin: 0 }}
-            rows={3}
-            aria-label="Opening message"
-            placeholder={ghost.text || "Opening message (optional)"}
-            value={line}
-            onChange={(e) => setLine(e.target.value)}
-            onKeyDown={(e) => e.stopPropagation()}
-          />
-          {ghost.idea ? <GhostUse onUse={() => ghost.idea && setLine(ghost.idea)} /> : null}
-          {line.trim() ? null : <QuickStarts data={quick} onPick={(s) => setLine(s.prompt)} />}
+          <SuggestField data={quick} show={suggesting} onPick={(s) => setLine(s.prompt)}>
+            {(minHeight) => (
+              <textarea
+                data-testid="opening-line"
+                style={{ width: "100%", display: "block", margin: 0, minHeight }}
+                rows={3}
+                aria-label="Opening message"
+                placeholder="Opening message (optional)"
+                value={line}
+                onChange={(e) => setLine(e.target.value)}
+                onKeyDown={(e) => e.stopPropagation()}
+              />
+            )}
+          </SuggestField>
           <div data-testid="start-options-row" style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
             {/* One machine at a time, so a segmented choice (as in Paseo's new-agent form), not checkboxes. */}
             <div data-testid="start-runs-on-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, minWidth: 0 }}>
@@ -654,7 +524,7 @@ export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; bo
             <button type="button" style={softBtn} onClick={() => setMode("idle")}>
               Cancel
             </button>
-            <button type="button" className="bfp-primary" style={primaryBtn} data-testid="start-go" disabled={!provider || (!!startHost && (!startHosts.some(h=>h.host===startHost && h.enabled)))} onClick={() => { if (!provider) return; recordOpeningPrompt(line); rememberStartChoice({ provider, effort }); writeRequest({ kind: "create", provider, ...(effort ? { thinkingOptionId: effort } : {}), prompt: line || undefined, ...runsOnRequest(ephemeral ? false : cloud, cloudProvider, startHost) }); }}>
+            <button type="button" className="bfp-primary" style={primaryBtn} data-testid="start-go" disabled={startDisabled} aria-label="Start" aria-keyshortcuts="Meta+Enter Control+Enter" data-kbd={modEnterHint()} onClick={launch}>
               Start
             </button>
           </div>
@@ -662,16 +532,6 @@ export function FramePanel({ frame, boardId, onOpen }: { frame: TLFrameShape; bo
       ) : null}
       {err ? <span style={{ color: B.danger }}>{err}</span> : null}
     </>,
-  );
-}
-
-// Outline pin when unpinned, filled when pinned; drawn in currentColor so it keeps the theme's contrast.
-function PinIcon({ filled }: { filled: boolean }) {
-  return (
-    <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 4h6l-1 5 3 3v2H7v-2l3-3-1-5z" />
-      <path d="M12 14v6" />
-    </svg>
   );
 }
 

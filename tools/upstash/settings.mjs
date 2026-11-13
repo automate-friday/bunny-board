@@ -2,13 +2,12 @@ import {Context,Effect,Layer} from 'effect';
 import {readFile,mkdir,writeFile,rename,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
-export const DEFAULT_WORKER_SETTINGS={maxConcurrentWorkers:10,ttlSeconds:86400};
+export const DEFAULT_WORKER_SETTINGS={ttlSeconds:86400};
 export function validateWorkerSettings(value){
  if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Worker settings must be an object');
- const {maxConcurrentWorkers,ttlSeconds}=value;
- if(!Number.isInteger(maxConcurrentWorkers)||maxConcurrentWorkers<1||maxConcurrentWorkers>25)throw Error('Concurrent workers must be between 1 and 25');
+ const {ttlSeconds}=value;
  if(!Number.isInteger(ttlSeconds)||ttlSeconds<180||ttlSeconds>259200)throw Error('Maximum age must be between 3 minutes and 72 hours');
- return {maxConcurrentWorkers,ttlSeconds};
+ return {ttlSeconds};
 }
 export class WorkerSettings extends Context.Tag('bunny/WorkerSettings')() {}
 const attempt=fn=>Effect.tryPromise({try:fn,catch:e=>e instanceof Error?e:new Error(String(e))});

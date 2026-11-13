@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { TranscriptItem, TranscriptRow } from "../../shared/components/transcript";
-import { MessageBody } from "./MessageBody";
+import { MessageBody, useResponseRaw } from "./MessageBody";
 import type { ToolCallDetail } from "./paseo/agent-types";
 import { diffLineCode, diffLinePrefix } from "./paseo/diff-highlight";
 import type { DisplayUnit } from "./paseo/grouping";
@@ -395,10 +395,11 @@ export function ToolGroupView<R extends TranscriptRow>({ unit, renderRow }: { un
 function AssistantItem({ row, item, ctx }: { row: TranscriptRow; item: TranscriptItem; ctx: ItemViewContext }) {
   const [fullText, setFullText] = useState<string | null>(null);
   const text = fullText ?? item.text ?? row.text;
+  const raw = useResponseRaw();
   return (
     <div data-kind={row.kind} data-testid="assistant-item" style={{ overflowWrap: "anywhere", lineHeight: 1.5, minWidth: 0 }}>
       {/* The images render below; drop their markdown so it does not show as "!Image". */}
-      <MessageBody text={item.images?.length ? text.replace(/!\[[^\]]*\]\([^)]*\)/g, "").trim() : text} compact={ctx.compact} />
+      <MessageBody text={item.images?.length ? text.replace(/!\[[^\]]*\]\([^)]*\)/g, "").trim() : text} compact={ctx.compact} raw={raw} />
       {item.images?.length ? <MessageImages images={item.images} /> : null}
       {fullText === null ? <TruncatedNotice row={row} item={item} ctx={ctx} onLoaded={(full) => setFullText(full.text ?? "")} onText={setFullText} /> : null}
     </div>

@@ -144,13 +144,21 @@ export function noteViewed(board: string, viewer: string, frameId: string): void
 }
 export const readAgentSends = (storage: StorageReader | undefined) => readTimes(storage, AGENT_SENDS_KEY, isAgent);
 export const rememberAgentSend = (storage: StorageWriter | undefined, agentId: string, at = Date.now()) => touch(storage, AGENT_SENDS_KEY, agentId, at, isAgent);
+/** This viewer started a conversation in a frame (no agent yet): Recent treats it as a send. */
+export function rememberFrameStart(frameId: string): void {
+  let storage: StorageWriter | undefined;
+  try { storage = window.localStorage; } catch { /* storage blocked */ }
+  rememberAgentSend(storage, `frame:${frameId}`);
+}
 
 // Last interaction per frame: the later of jumping to it and messaging its bound agent.
 export function lastInteracted(frames: readonly PaletteFrame[], jumps: ReadonlyMap<string, number>, sends: ReadonlyMap<string, number>): Map<string, number> {
   const times = new Map<string, number>();
   for (const frame of frames) {
     const jumped = jumps.get(frame.id);
-    const sent = frame.agentId ? sends.get(frame.agentId) : undefined;
+    const toAgent = frame.agentId ? sends.get(frame.agentId) : undefined;
+    const started = sends.get(`frame:${frame.id}`);
+    const sent = toAgent === undefined && started === undefined ? undefined : Math.max(toAgent ?? -Infinity, started ?? -Infinity);
     if (jumped !== undefined || sent !== undefined) times.set(frame.id, Math.max(jumped ?? -Infinity, sent ?? -Infinity));
   }
   return times;

@@ -3,10 +3,16 @@
 Bunny by Automate Friday runs on your own machine. This guide uses the supplied
 [Docker Compose stack](../deploy/compose/docker-compose.yml).
 
-Use the completed release receipt supplied with your archive to see the exact version,
-operating system, provider and checks that were tested. Localhost testing does not verify
-production HTTPS or licence entitlement. Fresh provider login and Codex need their own
-checks. See [release check](release/CHECK.md).
+A fresh Ubuntu 24.04 VPS trial used a vanilla coding agent given only the public
+repository URL to install Bunny. It verified normal Codex login, a browser task and
+correction, a workspace file and attachment, restart continuation, and full recovery
+into fresh volumes with a new visible reply without reauthentication. Licensed public
+HTTPS, production tldraw entitlement and off-host encrypted backup remain untested. See
+[release check](release/CHECK.md).
+
+The installer corrected restrictive source-file permissions caused by its launch umask.
+The recovery drill required GNU tar to preserve symlink ownership; use the corrected
+[recovery procedure](self-hosted-recovery.md). These were not zero-adjustment runs.
 
 For a VPS, start with [the VPS installation guide](install-vps.md), which includes
 Docker installation and SSH browser access. The commands below assume Docker is ready.
@@ -37,6 +43,7 @@ You need:
   (the stack uses optional service dependencies).
 - Enough disk for source builds, images, workspaces and a separate full backup.
   No measured minimum RAM or CPU requirement is available. Agent jobs add load.
+  Tested on Ubuntu 24.04, 4 vCPU / 8 GB (Hetzner CPX32); this is tested hardware, not a minimum.
 - Internet access for image/package pulls and a Claude Code or Codex account with
   access accepted by its CLI. Provider use is separate from course access.
 - Free host ports: HTTP **8080**, reserved proxy HTTPS **8443**, direct board **8793**.
@@ -95,8 +102,9 @@ output says Claude is signed in; the wrapper's exit status alone is not proof of
 New frames default to a Claude provider/model; choose an available Claude model in the UI.
 
 For Codex instead, use `docker compose -p bunnyboard run --rm runtime login codex`
-(**untested**), which invokes `codex login --device-auth`, then choose Codex when starting
-a conversation. `login` with no provider attempts both; you only need one working provider.
+which invokes `codex login --device-auth`, then choose Codex when starting
+a conversation. Normal device login inside the runtime was verified on a fresh VPS;
+`runtime status` reported “Logged in using ChatGPT”. `login` with no provider attempts both; you only need one working provider.
 
 Open [your local board](http://localhost:8080/?board=main). Expect the Bunny canvas,
 not just an HTTP response. A health check is useful but does not prove the licence gate,
@@ -118,8 +126,9 @@ connected. If Caddy auth is enabled, these proxy requests need basic credentials
    **What I can do in 20 minutes**. Fill each with a real detail.
 2. Press **F** and draw a frame around the notes, or use **Draw a frame** on an empty
    board and put the notes inside it.
-3. Select the frame → **Start conversation**. Choose the provider you signed in to and
-   an available model. Ask: “Read these notes. Add a checklist inside this frame for
+3. Select the frame → **Start conversation**. The model picker defaults to Claude even
+   when only Codex is logged in. Choose the provider you signed in to (**Harness → Codex**
+   for a Codex login), then an available model. Ask: “Read these notes. Add a checklist inside this frame for
    one useful thing I can finish in 20 minutes.” Press **Start**.
 4. Expect a sidebar reply and a checklist inside the frame. Reply with a correction;
    confirm the conversation continues. This is the first-task receipt.
@@ -128,6 +137,9 @@ If the agent says it is not logged in, rerun the chosen provider's CLI login, ch
 and start a fresh conversation in another frame. There is no board `/login` command.
 The organizer shortcut is unavailable in this Compose image: it requires a local `codex`
 binary in the board container. Use the frame conversation for this task.
+
+To attach files or recordings, drop them inside a frame already bound to a local agent.
+Dropping outside a bound frame shows a notice asking you to drop inside one.
 
 ## Reopen later or restart
 

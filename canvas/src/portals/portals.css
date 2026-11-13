@@ -1,9 +1,10 @@
-/* The layer all portal UI renders into (Portals.tsx usePortalLayer): above board shapes
-   (same z-index as tldraw's shapes layer, later in the DOM), under tldraw's UI. */
+/* Portals sit above the canvas (its shapes are contained in their own stacking
+   context), but below canvas-in-front (250), which holds Bunny's frame panels.
+   Child z-indices cannot lift those panels above a higher sibling portal layer. */
 .bunny-portal-layer {
   position: absolute;
   inset: 0;
-  z-index: 300;
+  z-index: 240;
   pointer-events: none;
   overflow: hidden;
 }
@@ -326,4 +327,125 @@
 }
 .bunny-peeking .tlui-style-panel__wrapper {
   visibility: hidden;
+}
+
+/* A frame pinned to the screen (screenPins.ts): the peek's window, small, moved by its title
+   chip (which sits inside the window here) and resized by its corner. */
+.bunny-portal-rift.window {
+  z-index: 268;
+}
+.bunny-portal-rift.window .bunny-portal-chip {
+  top: 6px;
+  left: 6px;
+  right: 6px;
+  max-width: none;
+  transform: none;
+  cursor: grab;
+  touch-action: none;
+}
+/* The title is the handle: it takes the free width (and never shrinks to nothing). */
+.bunny-portal-rift.window .bunny-portal-chip .bunny-portal-title {
+  flex: 1;
+  min-width: 48px;
+}
+.bunny-portal-rift.window .bunny-portal-chip:active {
+  cursor: grabbing;
+}
+.bunny-portal-rift.window .bunny-portal-inside {
+  top: 0;
+}
+.bunny-window-resize {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 18px;
+  height: 18px;
+  z-index: 25;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: linear-gradient(135deg, transparent 50%, var(--portal) 50%);
+  border-bottom-right-radius: 9px;
+}
+
+/* A peek's and a window's title chip: the UI font and 32px controls (docs/VISUAL-STANDARDS.md);
+   its ⋯ menu drops down under it. */
+.bunny-portal-rift.peek .bunny-portal-chip {
+  font: 500 12px var(--bunny-font-ui, Inter, system-ui, sans-serif);
+  padding: 2px 2px 2px 12px;
+  border-radius: 9px;
+}
+.bunny-portal-rift.peek .bunny-portal-chip > button {
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font: 500 12px var(--bunny-font-ui, Inter, system-ui, sans-serif);
+  box-sizing: border-box;
+}
+.bunny-portal-rift.peek .bunny-portal-chip > button.icon {
+  padding: 0;
+  font-size: 16px;
+}
+.bunny-portal-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--bunny-cream, light-dark(#FFF8EB, var(--bunny-surface)));
+  color: light-dark(#2E1F16, var(--bunny-ink));
+  border: 1px solid light-dark(rgba(46, 31, 22, 0.12), rgba(185, 197, 216, 0.22));
+  box-shadow: 0 10px 30px rgba(46, 31, 22, 0.14), 0 1px 2px rgba(46, 31, 22, 0.06);
+  white-space: nowrap;
+  z-index: 30;
+}
+.bunny-portal-menu button {
+  all: unset;
+  box-sizing: border-box;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 9px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  font: 500 13px var(--bunny-font-ui, Inter, system-ui, sans-serif);
+}
+.bunny-portal-menu button:hover,
+.bunny-portal-menu button:focus-visible {
+  background: light-dark(rgba(46, 31, 22, 0.06), rgba(185, 197, 216, 0.1));
+}
+
+/* The conversation pane folded: a slim strip that is all handle ("Chat", written down it). */
+.bunny-side-handle {
+  all: unset;
+  box-sizing: border-box;
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: light-dark(rgba(46, 31, 22, 0.6), var(--bunny-muted));
+  font: 500 12px var(--bunny-font-ui, Inter, system-ui, sans-serif);
+}
+.bunny-side-handle {
+  inset: 0;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding-top: 12px;
+  gap: 8px;
+  border-left: 1px solid light-dark(rgba(46, 31, 22, 0.12), rgba(185, 197, 216, 0.22));
+  background: light-dark(#FFF8EB, var(--bunny-surface));
+}
+.bunny-side-handle span {
+  font-weight: 600;
+}
+.bunny-side-handle:hover,
+.bunny-side-handle:focus-visible {
+  color: light-dark(#6F5CE6, hsl(248 73% 74%));
+  background: light-dark(#EFE8FE, hsl(259 45% 21%));
 }

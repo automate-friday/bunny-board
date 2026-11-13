@@ -35,6 +35,12 @@ export function moveFramesToPage(editor: Editor, ids: readonly TLShapeId[], page
     // moveShapesToPage works on the current page's shapes.
     if (viewing !== fromPage) editor.setCurrentPage(fromPage);
     editor.moveShapesToPage(frames, pageId);
+    // tldraw's move uses paste, which can auto-parent a root frame into a frame
+    // already at its incoming position. Free-space placement below would then move
+    // it outside that parent's clip path, hiding the frame and everything in it.
+    // Restore only the moved roots to page level, preserving their page transforms
+    // and intentional descendants. Leave roots alone if tldraw refused the move.
+    editor.reparentShapes(frames.filter((id) => editor.getAncestorPageId(id) === pageId), pageId);
     const boxes = frames.map((id) => editor.getShapePageBounds(id)).filter((b): b is NonNullable<typeof b> => !!b);
     if (boxes.length) {
       const x = Math.min(...boxes.map((b) => b.x)), y = Math.min(...boxes.map((b) => b.y));

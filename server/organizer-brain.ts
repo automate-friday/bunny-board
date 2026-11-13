@@ -48,9 +48,11 @@ export class OrganizerBrain {
   private pending = new Map<number, (m: Msg) => void>();
   private listeners = new Set<(m: Msg) => void>();
 
+  // `opts`: the model and effort for this brain's threads (the suggestion cards use their own).
   constructor(
     private readonly instructions: string,
     private readonly log: (m: string) => void,
+    private readonly opts: { model?: string; effort?: string } = {},
   ) {}
 
   private start(): Promise<void> {
@@ -179,7 +181,7 @@ export class OrganizerBrain {
 
   private async newThread(cwd: string): Promise<{ id: string; turns: number }> {
     const r = await this.rpc("thread/start", {
-      model: BRAIN_MODEL,
+      model: this.opts.model ?? BRAIN_MODEL,
       serviceTier: TIER,
       ephemeral: true,
       cwd,
@@ -240,7 +242,7 @@ export class OrganizerBrain {
     // `done` may settle while turn/start is still pending (codex exits); never leave it unhandled.
     done.catch(() => undefined);
     try {
-      await this.rpc("turn/start", { threadId, input: [{ type: "text", text, text_elements: [] }], outputSchema: schema, effort: "low", ...(model ? { model } : {}) });
+      await this.rpc("turn/start", { threadId, input: [{ type: "text", text, text_elements: [] }], outputSchema: schema, effort: this.opts.effort ?? "low", ...(model ? { model } : {}) });
     } catch (e) {
       cleanup();
       throw e;

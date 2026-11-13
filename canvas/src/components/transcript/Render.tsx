@@ -10,6 +10,8 @@ import { RemoteCoverage } from "../../RemoteCoverage";
 // shared agent store, never from the shape, so streaming never writes the document.
 
 import { MessageBody } from "../../MessageBody";
+import { sendPhotosToFrame } from "../../fileDrop";
+import { FrameUploadReceipts } from "../../frameUploads";
 import { ChatComposer } from "../../ChatComposer";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useEditor, useValue } from "tldraw";
@@ -58,6 +60,7 @@ export function TranscriptRender({ shape }: { shape: TranscriptShape }) {
   const editor = useEditor();
   const ui = useContext(BoardUiCtx);
   const { agentId } = shape.props;
+  const boardId = new URLSearchParams(window.location.search).get("board") || "main";
   // Full/Compact and Follow are this viewer's choice (localStorage), not the document's.
   const [{ mode, follow }, setView] = useViewState(shape.id, { mode: shape.props.mode, follow: shape.props.follow });
   const pageVisible=usePageVisible();
@@ -173,6 +176,7 @@ export function TranscriptRender({ shape }: { shape: TranscriptShape }) {
     <div
       onPointerEnter={()=>agentStore.prefetch(agentId)}
       onPointerDown={()=>agentStore.prefetch(agentId,true)}
+      data-chat-drop=""
       data-testid="transcript-card"
       data-mode={mode}
       data-agent-id={agentId}
@@ -249,7 +253,8 @@ export function TranscriptRender({ shape }: { shape: TranscriptShape }) {
       {mode === "compact" ? <div data-testid="transcript-coverage" style={{ padding: "4px 8px", fontSize: 10, color: "light-dark(#666, var(--bunny-muted))", flexShrink: 0 }}>Latest {shown.length} rows, newest first · scroll for more · Full opens the recent log</div> : null}
       {err ? <div style={{ color: "light-dark(#c00, hsl(0 88% 74%))", padding: "2px 8px", fontSize: 11 }}>{err}</div> : null}
       {!view?.remote ? <PermissionCards state={controls} paseoLink={paseoLink} compact /> : null}
-      <ChatComposer agentId={agentId} view={view} status={status} canPrompt={capabilities.can("prompt")} unavailable={capabilities.error} compact placeholder={`Reply to ${conversationTitle}…`} />
+      {bound?.frameId ? <FrameUploadReceipts boardId={boardId} frameId={bound.frameId} compact /> : null}
+      <ChatComposer key={agentId} attach={bound?.frameId && !bound.host ? (files) => sendPhotosToFrame(editor, boardId, bound.frameId, agentId, files) : undefined} agentId={agentId} view={view} status={status} canPrompt={capabilities.can("prompt")} unavailable={capabilities.error} compact placeholder={`Reply to ${conversationTitle}…`} />
     </div>
   );
 }

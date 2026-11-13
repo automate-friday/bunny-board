@@ -11,6 +11,20 @@ Bunny port private. Public HTTPS is a separate configuration below. Both routes
 need an applicable tldraw licence for production use; a tunnel is not a licence
 exemption. The built-in agent runtime also needs the user's own provider login.
 
+## Tested preview scope
+
+A fresh Ubuntu 24.04 VPS trial used a vanilla coding agent given only the public
+repository URL to install Bunny. It verified normal Codex login, a browser task and
+correction, a workspace file and attachment, restart continuation, and full recovery
+into fresh volumes with a new visible reply without reauthentication. Licensed public
+HTTPS, production tldraw entitlement and off-host encrypted backup remain untested.
+
+The trial corrected restrictive source-file permissions caused by the installer launch
+umask and used GNU tar for volume restoration to preserve symlink ownership.
+New conversations default to Claude; explicitly select Codex if that is the provider
+you authenticated. The keyless canvas displayed a production-licence reminder; this
+does not grant production rights.
+
 ## 1. Record the source and check the machine
 
 Check `git`, `curl`, `openssl` and CA certificates first, even if Docker is already
@@ -123,6 +137,9 @@ production acceptance incomplete. See [tldraw licensing](https://tldraw.dev/comm
 
 ## 4. Build, start and sign in to one provider
 
+Docker builds normalize source permissions inside the image, including checkouts
+created under `umask 077`; keep credential files private.
+
 ```sh
 docker compose -p bunnyboard config --quiet
 docker compose -p bunnyboard up -d --build
@@ -172,11 +189,13 @@ serve 8080, 8443, 8793 or 6767.
 
 Follow [A useful first task](self-hosted.md#a-useful-first-task): three notes,
 a frame, an available provider/model, a useful checklist, and a correction.
+The start form defaults to Claude; select **Harness → Codex** after a Codex login.
 Confirm the assistant reply appears **inside the open sidebar**, not only in the
 frame card or a status badge. Ask the agent to create a workspace file containing
 `Bunny restore check 2026` and open it to verify those exact contents. Upload a
 small synthetic text attachment containing `Bunny attachment restore check` to
-the board and open it. Record both locations and contents for the restore check;
+a frame already bound to a local agent and open it. Dropping outside a bound frame
+shows a notice asking you to use one. Record both locations and contents for the restore check;
 do not use personal files as test fixtures.
 
 ```sh

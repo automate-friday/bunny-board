@@ -1,3 +1,4 @@
+import { rememberFrameStart } from "../jumpPaletteModel";
 import {startHostsMemo,watchStartHosts} from "../startHosts";
 // Phone shell: the New agent start form as a bottom sheet above everything else (scrim,
 // spotlight, frame panel), sized to the visual viewport so the keyboard never hides Cancel
@@ -6,7 +7,7 @@ import {startHostsMemo,watchStartHosts} from "../startHosts";
 // (the board's runtime or a fleet host) plus a Cloud agent switch (a cloud builder writes the
 // code; the agent itself still runs on the board's machine). The runtime choice names the
 // machine the agent will really run on (/api/ui/info agentMachine), never "this Mac".
-// Start is one request per tap (disabled while it is written); a frame the shell drew for
+// Start is one request per tap or ⌘/Ctrl+Enter (disabled while it is written); a frame the shell drew for
 // this sheet goes away again if the sheet is dismissed without Start.
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -24,13 +25,13 @@ import { useModalHold } from "./modalHold";
 import { useSwipeDismiss } from "./sheetDrag";
 import { cleanName, nameFromRequest } from "../../../shared/frame-names";
 import { B, BUNNY_CONTROLS_CSS, fieldLabel } from "../bunnyTheme";
+import { modEnterSubmits } from "../submitShortcut";
 import { FALLBACK_PROVIDERS, effortFor, fallbackCatalogue, rememberedChoice, type StartCatalogue, withCustomModels } from "../../../shared/start-catalogue";
 import { addCustomModel, customModels, lastStartChoice, lastStartPage, rememberStartChoice, rememberStartPage } from "../startChoice";
 import { CLOUD_PROVIDERS, CLOUD_PROVIDER_LABEL, type CloudProvider } from "../../../shared/cloud-provider";
 import { upstashDefault, executionLabel, fleetHostsForRuntime, initialRunsOn, machineLabel, runsOnRequest, runsOnSummary } from "../../../shared/conversation-links";
 import "./startSheet.css";
-import { GhostUse, QuickStarts, useQuickStartData } from "../QuickStarts";
-import { useGhostIdea, useIdle } from "../ghostIdea";
+import { SuggestField, useQuickStartData } from "../QuickStarts";
 import { recordOpeningPrompt, takePendingPrompt } from "../quickStartPrompts";
 
 // "Open the start sheet for this frame", from anywhere on the phone (the frame panel's
@@ -180,10 +181,12 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
   const [custom, setCustom] = useState(customModels);
   const shownCatalogue = catalogue ? withCustomModels(catalogue, custom) : null;
   const [line, setLine] = useState(() => prefill?.prompt ?? takePendingPrompt(frameId) ?? "");
-  // Starter cards and, after a quiet 10 s, ghost ideas in the empty message box.
-  const untouched = !line.trim();
-  const quick = useQuickStartData({ editor, frameId, idle: useIdle(untouched) });
-  const ghost = useGhostIdea(quick.ideas, untouched);
+  // Next-step suggestions sit inside the message box while it is empty and no name has been
+  // typed (naming the agent is the person saying what they want).
+  const quick = useQuickStartData({ editor, frameId });
+  const [nameTyped, setNameTyped] = useState(false);
+  const suggesting = !line.trim() && !nameTyped;
+  const firstIdea = suggesting ? quick.cards[0]?.prompt : undefined;
   // Screenshots go into the frame before the agent starts: Tell Bunny's, plus any added here.
   const [photos, setPhotos] = useState<File[]>(() => prefill?.files ?? []);
   const previews = useMemo(() => photos.map((f) => URL.createObjectURL(f)), [photos]);
@@ -310,6 +313,8 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
       setPending(false);
       return;
     }
+    // Starting counts as your first message (frame tabs' Recent, the phone's recent order).
+    rememberFrameStart(target.id);
     // Screenshots first, so the agent finds them in its frame when it starts.
     if (photos.length && boardId) {
       try {
@@ -350,7 +355,7 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
     <div className="bm-start-layer" data-mobile-ui data-testid="mobile-start-layer" style={{ top: vp.top, height: vp.height }}>
       <style>{BUNNY_CONTROLS_CSS}</style>
       <div className="bm-start-scrim" onPointerDown={() => !busy.current && onCancel()} />
-      <div ref={swipe} className="bm-start-sheet" data-testid="mobile-start-sheet" data-full={full} data-kb={vp.height < window.innerHeight - 120} role="dialog" aria-modal="true" aria-label="Start a new agent" onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape" && !busy.current) onCancel(); }}>
+      <div ref={swipe} className="bm-start-sheet" data-testid="mobile-start-sheet" data-full={full} data-kb={vp.height < window.innerHeight - 120} role="dialog" aria-modal="true" aria-label="Start a new agent" onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape" && !busy.current) onCancel(); else if (modEnterSubmits(e.nativeEvent)) { e.preventDefault(); void start(); } }}>
         <div className="bm-start-head">
           <span className="bm-grip-bar" aria-hidden="true" />
           <b>New agent</b>
@@ -400,7 +405,7 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
           </div>
           <label className="bm-start-field">
             <span style={fieldLabel}>Name</span>
-            <input data-testid="start-name" className="bm-start-input" type="text" maxLength={80} enterKeyHint="next" autoComplete="off" placeholder={derived} aria-label="Agent name" value={name} onChange={(e) => setName(e.target.value)} />
+            <input data-testid="start-name" className="bm-start-input" type="text" maxLength={80} enterKeyHint="next" autoComplete="off" placeholder={derived} aria-label="Agent name" value={name} onChange={(e) => { setName(e.target.value); setNameTyped(!!e.target.value.trim()); }} />
           </label>
           <div className="bm-start-field">
             <span style={fieldLabel}>Model</span>
@@ -413,14 +418,16 @@ export function StartSheet({ editor, frameId, onCancel, onStarted, prefill, wher
               onCustom={(v) => { setCustom(addCustomModel(v)); setProvider(v); rememberStartChoice({ provider: v, effort }); }}
             />
           </div>
-          <div className="bm-start-message">
-            <textarea data-testid="opening-line" className="bm-start-text" rows={3} aria-label="Opening message" placeholder={ghost.text || "Opening message (optional)"} value={line} onChange={(e) => setLine(e.target.value)} onKeyDown={(e) => { if (e.key === "Tab" && !e.shiftKey && ghost.idea && !line) { e.preventDefault(); setLine(ghost.idea); } }} onPaste={(e) => { const imgs = pastedImages(e); if (imgs.length) { e.preventDefault(); addPhotos(imgs); } }} />
-            <button type="button" className="bm-start-expand" data-testid="start-fullscreen" aria-pressed={full} aria-label={full ? "Close full screen message" : "Write the message full screen"} onClick={() => setFull((f) => !f)}>
-              {full ? <CollapseIcon /> : <ExpandIcon />}
-            </button>
-          </div>
-          {ghost.idea ? <GhostUse onUse={() => ghost.idea && setLine(ghost.idea)} /> : null}
-          {line.trim() ? null : <QuickStarts data={quick} layout="compact" onPick={(s) => setLine(s.prompt)} />}
+          <SuggestField data={quick} show={suggesting} layout="compact" insetRight={40} className="bm-start-message" onPick={(s) => setLine(s.prompt)}>
+            {(minHeight) => (
+              <>
+                <textarea data-testid="opening-line" className="bm-start-text" rows={3} style={minHeight ? { minHeight } : undefined} aria-label="Opening message" placeholder="Opening message (optional)" value={line} onChange={(e) => setLine(e.target.value)} onKeyDown={(e) => { if (e.key === "Tab" && !e.shiftKey && firstIdea && !line) { e.preventDefault(); setLine(firstIdea); } }} onPaste={(e) => { const imgs = pastedImages(e); if (imgs.length) { e.preventDefault(); addPhotos(imgs); } }} />
+                <button type="button" className="bm-start-expand" data-testid="start-fullscreen" aria-pressed={full} aria-label={full ? "Close full screen message" : "Write the message full screen"} onClick={() => setFull((f) => !f)}>
+                  {full ? <CollapseIcon /> : <ExpandIcon />}
+                </button>
+              </>
+            )}
+          </SuggestField>
           <div className="bm-start-photos" data-testid="start-photos">
             <PhotoTray photos={photos} previews={previews} setPhotos={setPhotos} disabled={pending} />
             <input ref={picker} type="file" accept="image/*" multiple hidden data-testid="start-photo-input" onChange={(e) => { const picked = Array.from(e.target.files ?? []); e.target.value = ""; addPhotos(picked); }} />

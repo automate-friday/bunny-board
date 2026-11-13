@@ -25,7 +25,12 @@ export type HistoryKind = "start" | "human" | "agent";
 
 export interface HistoryEntry {
   id: string;
+  // When the snapshot was taken: the burst had settled (a debounce after its last edit).
   at: number;
+  // When the burst's last edit happened, so "the frame as it stood at time T" (snapshotAt)
+  // does not miss an edit made just before T. Absent on a "start" entry, on a restore and
+  // on entries recorded before this field existed (`at` stands in).
+  edited?: number;
   // "start": how the frame looked before its first recorded edit.
   kind: HistoryKind;
   // The person's name, or the agent id.
@@ -43,6 +48,7 @@ interface Pending {
   kind: "human" | "agent";
   by: string | null;
   first: number;
+  last: number;
   timer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -127,6 +133,17 @@ function framesOf(records: RecMap, rec: Rec, out: Set<string>): void {
   }
 }
 
+// The entry that shows a frame as it stood at `time`: the newest one whose last edit (its
+// settle time when that was not recorded) is at or before `time`. A "start" entry is the frame
+// before its first recorded edit, so it also answers for every earlier time. Null when the
+// history holds nothing that old: nothing was ever recorded, or the oldest entries were
+// dropped at the cap.
+export function snapshotAt<E extends Pick<HistoryEntry, "at" | "kind" | "edited">>(entries: readonly E[], time: number): E | null {
+  let found: E | null = null;
+  for (const e of entries) if (e.kind === "start" || (e.edited ?? e.at) <= time) found = e;
+  return found;
+}
+
 export class FrameHistory {
   private readonly boards = new Map<string, Map<string, HistoryEntry[]>>();
   private readonly pending = new Map<string, Pending>();
@@ -208,9 +225,10 @@ export class FrameHistory {
         if (start) this.push(room.id, frameId, { kind: "start", by: null, at: now, records: start });
       }
       if (!p) {
-        p = { room, frameId, kind, by, first: now, timer: null };
+        p = { room, frameId, kind, by, first: now, last: now, timer: null };
         this.pending.set(k, p);
       }
+      p.last = now;
       if (p.timer) clearTimeout(p.timer);
       const pend = p;
       pend.timer = setTimeout(() => {
@@ -228,7 +246,7 @@ export class FrameHistory {
     if (p.timer) clearTimeout(p.timer);
     this.pending.delete(k);
     const recs = frameContents(view, frameId);
-    if (recs) this.push(room.id, frameId, { kind: p.kind, by: p.by, at: Date.now(), records: recs });
+    if (recs) this.push(room.id, frameId, { kind: p.kind, by: p.by, at: Date.now(), edited: p.last, records: recs });
   }
 
   // Settle every pending burst of one frame (before a restore) or of all frames (stop).
@@ -266,6 +284,13 @@ export class FrameHistory {
 
   get(boardId: string, frameId: string, entryId: string): HistoryEntry | null {
     return this.board(boardId).get(frameId)?.find((e) => e.id === entryId) ?? null;
+  }
+
+  // The frame's contents as they stood at `time` (snapshotAt). An unsettled burst is settled
+  // first, so edits made moments before `time` count.
+  at(boardId: string, frameId: string, time: number): HistoryEntry | null {
+    this.flush(boardId, frameId);
+    return snapshotAt(this.board(boardId).get(frameId) ?? [], time);
   }
 
   // When the frame's contents last changed (its newest settled entry), or null if never recorded.

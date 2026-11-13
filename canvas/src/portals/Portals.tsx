@@ -16,6 +16,7 @@ import { pageFrames } from "../pageFrames";
 import { PortalRift } from "./PortalRift";
 import { PortalIcon } from "./icons";
 import { PortalToolOverlay } from "./PortalTool";
+import { addScreenPin, frontScreenPin, loadScreenPins, newSpot, removeScreenPin, SCREEN_PIN_LIMIT, type ScreenPin, screenPins, setScreenPins, updateScreenPin } from "./screenPins";
 import "./portals.css";
 
 type Cam = { x: number; y: number; z: number };
@@ -142,13 +143,20 @@ export function jumpThrough(editor: Editor, noteId: string): boolean {
   const note = editor.getShape(noteId as TLShapeId);
   const p = livePortal(editor, note);
   const b = p && portalBounds(editor, p);
-  if (!b) return false;
+  if (!p || !b) return false;
+  // A shape's portal can lead to another page (a channel sticky's other frame often is on
+  // one): go to that page first, and remember this one so Back returns here.
+  const here = editor.getCurrentPageId();
+  const target = isAreaPortal(p) ? undefined : editor.getShape(p.id as TLShapeId);
+  const page = (target && editor.getAncestorPageId(target)) || here;
   const cam = editor.getCamera();
-  portalBack.set([...portalBack.get(), { cam: { x: cam.x, y: cam.y, z: cam.z }, from: noteId }].slice(-20));
+  portalBack.set([...portalBack.get(), { cam: { x: cam.x, y: cam.y, z: cam.z }, from: noteId, page: here }].slice(-20));
   portalOpen.set(null);
   portalHover.set(null);
   selfMove();
-  editor.zoomToBounds(b, { ...ANIM, inset: 80, targetZoom: 1 });
+  const moved = page !== here;
+  if (moved) editor.setCurrentPage(page);
+  editor.zoomToBounds(b, { ...(moved ? {} : ANIM), inset: 80, targetZoom: 1 });
   portalFlash.set({ box: { x: b.x, y: b.y, w: b.w, h: b.h }, at: Date.now(), color: portalColor(editor, note) });
   return true;
 }
@@ -161,7 +169,18 @@ export function flashTarget(editor: Editor, noteId: string): void {
   if (b) portalFlash.set({ box: { x: b.x, y: b.y, w: b.w, h: b.h }, at: Date.now(), color: portalColor(editor, note) });
 }
 
-/** Jump the board to a frame, on any page, remembering where we were (Back returns). */
+/** Pin a frame to the screen: a small window onto it that stays while you move around (and a
+ *  pill in the bottom dock). Closes the peek; says which window closed to make room. */
+export function pinToScreen(editor: Editor, frameId: string, toast: (text: string) => void): void {
+  const vb = editor.getViewportScreenBounds();
+  const { pins, dropped } = addScreenPin(screenPins.get(), frameId, newSpot(screenPins.get(), { w: vb.w, h: vb.h }));
+  setScreenPins(pins);
+  framePeek.set(null);
+  if (dropped) toast(`Closed the window on “${textOf(editor.getShape(dropped as TLShapeId)).slice(0, 32)}” to make room (${SCREEN_PIN_LIMIT} at most)`);
+}
+
+/** Jump the board to a frame, on any page, remembering where we were (Back returns), and
+ *  select it, so its conversation opens in the sidebar (one action to switch to it). */
 export function jumpToFrame(editor: Editor, frameId: string): boolean {
   const shape = editor.getShape(frameId as TLShapeId);
   const page = shape ? editor.getAncestorPageId(shape) : undefined;
@@ -173,6 +192,7 @@ export function jumpToFrame(editor: Editor, frameId: string): boolean {
   selfMove();
   const moved = page !== editor.getCurrentPageId();
   if (moved) editor.setCurrentPage(page);
+  editor.select(shape.id);
   const b = editor.getShapePageBounds(shape.id);
   if (!b) return false;
   editor.zoomToBounds(b, { ...(moved ? {} : ANIM), inset: 80, targetZoom: 1 });
@@ -276,9 +296,13 @@ const PortalBadges = memo(function PortalBadges({ editor }: { editor: Editor }) 
   );
 });
 
-export function Portals({ editor, toast, rift, peekExtra, peekSide }: { editor: Editor; toast(text: string): void; rift: RiftProps; peekExtra?: (frameId: string) => React.ReactNode; peekSide?: (frameId: string) => React.ReactNode }) {
+export function Portals({ editor, toast, rift, peekExtra, peekSide, peekChatOpen = true, onPeekChat, peekChatWide = false, boardId, conversation }: { editor: Editor; toast(text: string): void; rift: RiftProps; peekExtra?: (frameId: string) => React.ReactNode; peekSide?: (frameId: string) => React.ReactNode; /** Whether the peek's conversation pane is unfolded, and its fold toggle. */ peekChatOpen?: boolean; onPeekChat?(): void; /** The peek's conversation widened for reading (3/4 of the window). */ peekChatWide?: boolean; /** Frames pinned to the screen (desktop): this board's windows. */ boardId?: string; /** A frame's conversation for a window's (folded) chat pane, with its wide state. */ conversation?: (frameId: string, wide: boolean, setWide: (wide: boolean) => void) => React.ReactNode }) {
   const open = useValue(portalOpen);
   const peek = useValue(framePeek);
+  useEffect(() => {
+    if (boardId) loadScreenPins(boardId);
+  }, [boardId]);
+  const windows = useValue(screenPins);
   const back = useValue(portalBack);
   const flash = useValue(portalFlash);
   const hover = useValue(portalHover);
@@ -302,7 +326,7 @@ export function Portals({ editor, toast, rift, peekExtra, peekSide }: { editor: 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Esc inside the rift first leaves its own editing/selection (PortalRift handles it).
-      if (e.key === "Escape" && (portalOpen.get() || framePeek.get()) && !document.querySelector(".bunny-portal-rift.focused")) {
+      if (e.key === "Escape" && (portalOpen.get() || framePeek.get()) && !document.querySelector(".bunny-portal-rift.focused") && !document.querySelector('.bunny-portal-rift.peek:not(.window) [data-reading="1"]')) {
         portalOpen.set(null);
         framePeek.set(null);
       }
@@ -378,16 +402,37 @@ export function Portals({ editor, toast, rift, peekExtra, peekSide }: { editor: 
   const hoverNote = hover ? editor.getShape(hover as TLShapeId) : undefined;
   const hoverPortal = livePortal(editor, hoverNote);
   const hoverBox = hoverPortal ? portalBounds(editor, hoverPortal) : null;
-  // Portal UI lives in its own layer above every board shape (tldraw's in-front layer
-  // sits under the shapes layer, so a shape's text label could cover "Jump there"),
-  // yet under tldraw's own menus and panels.
+  // Portal UI lives above the canvas's contained shapes, but below canvas-in-front
+  // (Bunny panels) and tldraw's menus. Keep these sibling stacking contexts ordered
+  // in portals.css so badges and windows cannot cover the start form.
   const layer = usePortalLayer(editor);
   if (!layer) return null;
   return createPortal(
     <>
       <PortalBadges editor={editor} />
-      {peek && peekExists && !open ? <div className="bunny-peek-scrim" data-testid="peek-scrim" onPointerDown={(e) => { e.stopPropagation(); onClose(); }} /> : null}
-      {warm ? <PortalRift board={editor} noteId={open && openExists ? open : null} frameId={!open && peek && peekExists ? peek : null} extra={!open && peek && peekExists ? peekExtra?.(peek) : null} side={!open && peek && peekExists ? peekSide?.(peek) : null} onJump={onJump} onClose={onClose} toast={toast} shapeUtils={rift.shapeUtils} /> : null}
+      {/* A click on the board behind a peek closes it (capture: before the board's own pointer
+          handling, which would otherwise take the click). Screen windows have no scrim. */}
+      {peek && peekExists && !open ? (
+        <div
+          className="bunny-peek-scrim"
+          data-testid="peek-scrim"
+          onPointerDownCapture={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onClose();
+          }}
+        />
+      ) : null}
+      {/* Rendered in a fixed order (moving a live editor's DOM would disturb it); the list's
+          order, most recently used last, sets which window is in front. A minimized window
+          stays built (hidden, its copy of the board paused), so its pill brings it back at
+          once instead of rebuilding an editor and a copy of the whole board. */}
+      {boardId
+        ? [...windows]
+            .sort((a, b) => a.id.localeCompare(b.id))
+            .map((w) => <ScreenWindow key={w.id} editor={editor} pin={w} z={260 + windows.indexOf(w)} rift={rift} toast={toast} conversation={conversation} />)
+        : null}
+      {warm ? <PortalRift board={editor} noteId={open && openExists ? open : null} frameId={!open && peek && peekExists ? peek : null} menu={!open && peek && peekExists ? peekExtra?.(peek) : null} side={!open && peek && peekExists ? peekSide?.(peek) : null} sideOpen={peekChatOpen} sideWide={peekChatWide} onSideToggle={onPeekChat} onJump={onJump} onClose={onClose} toast={toast} shapeUtils={rift.shapeUtils} /> : null}
       {back.length ? (
         <div className="bunny-portal-back" data-testid="portal-back-pill" style={tint(portalColor(editor, lastFrom))} onPointerDown={stop}>
           <button type="button" className="bunny-portal-back-go" data-testid="portal-back" onClick={() => jumpBack(editor)} title="Return to where you jumped from">
@@ -407,9 +452,48 @@ export function Portals({ editor, toast, rift, peekExtra, peekSide }: { editor: 
   );
 }
 
-/** A layer in the editor container, just before tldraw's UI: same z-index as the shapes
- *  layer but later in the DOM, so it paints and takes pointers above every shape, and
- *  tldraw's UI (later still) stays above it. */
+// A frame pinned to the screen: the peek's live window at its own place and size, with –
+// (shrink to its pill) and Recentre in its title chip, and, for a frame with an agent, its
+// conversation folded into a strip on the right (the owner's call, over the visual
+// standards' "chat stays in the sidebar"). Hidden while its frame is gone (deleted or
+// archived), so undo or restore brings it back.
+function ScreenWindow({ editor, pin, z, rift, toast, conversation }: { editor: Editor; pin: ScreenPin; z: number; rift: RiftProps; toast(text: string): void; conversation?: (frameId: string, wide: boolean, setWide: (wide: boolean) => void) => React.ReactNode }) {
+  const state = useValue(
+    `screen-window:${pin.id}`,
+    () => {
+      const s = editor.getShape(pin.id as TLShapeId);
+      if (s?.type !== "frame") return "gone";
+      const p = (s.meta as { paseo?: { agentId?: string; request?: unknown } } | undefined)?.paseo;
+      return p?.agentId || p?.request ? "bound" : "frame";
+    },
+    [editor, pin.id],
+  );
+  const gone = state === "gone";
+  // Built the first time it is shown this visit (a window restored minimized costs nothing
+  // until opened), then kept: minimizing only hides and pauses it.
+  const [built, setBuilt] = useState(!pin.min);
+  useEffect(() => {
+    if (!pin.min) setBuilt(true);
+  }, [pin.min]);
+  const onSideToggle = useCallback(() => updateScreenPin(pin.id, { chat: !pin.chat }), [pin.id, pin.chat]);
+  const onFront = useCallback(() => frontScreenPin(pin.id), [pin.id]);
+  const setWide = useCallback((wide: boolean) => updateScreenPin(pin.id, { wide }), [pin.id]);
+  const onJump = useCallback(() => {
+    if (!jumpToFrame(editor, pin.id)) toast("This frame was deleted");
+  }, [editor, pin.id, toast]);
+  const onClose = useCallback(() => removeScreenPin(pin.id), [pin.id]);
+  const onRect = useCallback((r: { x: number; y: number; w: number; h: number }) => updateScreenPin(pin.id, r), [pin.id]);
+  if (gone || !built) return null;
+  const extra = (
+    <button type="button" data-testid="screen-window-min" title="Shrink to its pill (bottom of the board)" onClick={() => updateScreenPin(pin.id, { min: true })}>
+      –
+    </button>
+  );
+  return <PortalRift board={editor} noteId={null} frameId={pin.min ? null : pin.id} rect={pin} onRect={onRect} extra={extra} side={state === "bound" ? conversation?.(pin.id, pin.wide, setWide) : null} sideOpen={pin.chat} sideWide={pin.wide} onSideToggle={onSideToggle} z={z} onFront={onFront} onJump={onJump} onClose={onClose} toast={toast} shapeUtils={rift.shapeUtils} />;
+}
+
+/** A sibling layer above the contained canvas and below canvas-in-front / UI.
+ *  The CSS layer order applies to every portal badge, peek and pinned window. */
 function usePortalLayer(editor: Editor): HTMLElement | null {
   const [layer, setLayer] = useState<HTMLElement | null>(null);
   useLayoutEffect(() => {

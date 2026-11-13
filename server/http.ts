@@ -2,7 +2,9 @@ import {WorkerSettingsLive,workerSettingsRuntime} from '../tools/upstash/setting
 import {upstashDefault} from '../shared/conversation-links';
 import { startFrame } from "./frame-start";
 import { forkFrame } from "./frame-fork";
-import { QuickStartsAi } from "./quick-starts-ai";
+import { cleanSignals, modelRunner, QuickStartsAi } from "./quick-starts-ai";
+import { ensureBoardDirectory } from "./agent-context";
+import { addReports, RepoSignals } from "./suggestion-signals";
 import type { BoardSnapshots } from "./board-snapshots";
 import { imageVariant } from "./image-variants";
 import { resolvePaseoServerId } from "./paseo-identity";
@@ -22,6 +24,7 @@ import {timelinePage,timelineRow} from "./timeline-pages";
 import { lastHumanMessage, type LastSent } from "../shared/last-message";
 import {bundleFilePath} from "./artifact-bundle";
 import { MAX_IMAGE_BYTES, persistImage, readImageUpload } from './file-intake';
+import { MAX_SNAPSHOT_BYTES } from '../shared/frame-snapshot';
 import { transientDaemonError, withDaemonRead } from './daemon-health';
 import { buildControls, MAX_FILE_BYTES, parseFeatureBody, parseModeBody, parseModelBody, parsePermissionBody, parseThinkingBody, resolveImagePath } from "./agent-controls";
 import type { ObsRecordingSource } from './video-source';
@@ -118,7 +121,8 @@ const FILE_MIME: Record<string, string> = {
 
 const SETTERS = new Set(["/model", "/mode", "/thinking", "/feature"]);
 
-const quickStartsAi = new QuickStartsAi();
+let quickStartsAi: QuickStartsAi | null = null;
+const repoSignals = new RepoSignals();
 // Claude models the installed CLI reports, merged into Paseo's list (server/cli-models.ts).
 const claudeCliModels = new ClaudeCliModels();
 
@@ -229,16 +233,35 @@ export function startHttp(opts: {
     const body = req.method === "GET" ? Object.fromEntries(new URL(req.url ?? "", "http://x").searchParams) : await readBody(req);
     // biome-ignore lint/suspicious/noExplicitAny: validated inside AgentApi.
     const b = body as any;
-    if (room.records.get(frameId)?.meta?.paseo?.compression?.status === "pending" && !["read","read-image","write","comment"].includes(op)) throw new InputError("Compression pending: submit the requested summary without resizing or adding other content");
+    // URLSearchParams carries text; decode only the read operation's numeric
+    // paging fields here. JSON requests keep AgentApi's strict number contract.
+    if (req.method === "GET" && op === "read") {
+      for (const key of ["offset", "limit"] as const) {
+        if (b[key] === undefined) continue;
+        if (!/^[0-9]+$/.test(b[key])) throw new InputError(`${key} must be a decimal integer`);
+        b[key] = Number(b[key]);
+      }
+    }
+    if (room.records.get(frameId)?.meta?.paseo?.compression?.status === "pending" && !["read","read-image","snapshot","write","comment"].includes(op)) throw new InputError("Compression pending: submit the requested summary without resizing or adding other content");
     let out: unknown;
     if (op === 'channel' && channels) {
-      if (body.action==='list') out={channels:channels.list(boardId).filter(c=>c.active&&c.members.some(m=>m.frame===frameId))};
+      if (body.action==='list') {
+        // Requests this frame filed with open, so its agent can see what became of them.
+        const asked=channels.proposalsFrom(boardId,frameId);
+        out={channels:channels.list(boardId).filter(c=>c.active&&c.members.some(m=>m.frame===frameId)),...(asked.length?{proposals:asked}:{})};
+      }
       else if (body.action==='send') out=await channels.send(boardId,frameId,String(body.channelId??''),String(body.messageId??''),String(body.text??''));
-      else throw new InputError('expected list or send');
+      // open only files a proposal; approving is a person's, on the board page (the UI route below).
+      else if (body.action==='open') {
+        const {proposal,existing}=channels.propose(boardId,frameId,typeof body.frame==='string'?body.frame:'');
+        out={proposalId:proposal.id,status:proposal.status,existing,from:proposal.from,to:proposal.to,note:`No channel is open yet. ${cfg.humanName} approves or declines this proposal on the board; if approved, both agents get a "Channel opened" message. board_channel({action:'list'}) shows what became of it.`};
+      }
+      else throw new InputError('expected list, send or open');
     }
     else if (op === "video" && video) out = video.action(room, frameId, body);
     else if (op === "read") out = await agentApi.read(room, frameId, b);
     else if (op === "read-image") out = await agentApi.readImage(room, frameId, b);
+    else if (op === "snapshot") out = await agentApi.snapshot(room, frameId, b);
     else if (op === "pin") out = await agentApi.pin(room, frameId, b);
     else if (op === "cloud") out = agentApi.cloud(room, frameId, b);
     else if (op === "write") out = agentApi.write(room, frameId, b);
@@ -464,6 +487,17 @@ export function startHttp(opts: {
       const receipt=await uploads.accept(board,frameId,boundAgent(),String(req.headers['x-upload-id']??''),url.searchParams.get('name')??'',bytes);
       send(res,201,{ok:true,receipt});return true;
     }
+    // A canvas answering board_snapshot: the PNG of a frame it was asked to draw
+    // (server/frame-snapshots.ts). Only a request still being waited for is accepted.
+    const snapshotUpload=p.match(/^\/api\/ui\/boards\/([^/]+)\/frames\/([^/]+)\/snapshot$/);
+    if(snapshotUpload){
+      if(req.method!=='POST'){send(res,405,{error:'POST a PNG'});return true;}
+      const board=decodeURIComponent(snapshotUpload[1]),frameId=decodeURIComponent(snapshotUpload[2]);
+      if(!host.exists(board))throw Object.assign(new Error('board does not exist'),{status:404});
+      if(Number(req.headers['content-length']??0)>MAX_SNAPSHOT_BYTES)throw Object.assign(new Error('Snapshot exceeds the upload limit'),{status:413});
+      const stored=agentApi.snapshots.accept(board,frameId,url.searchParams.get('request')??'',await readImageUpload(req,MAX_SNAPSHOT_BYTES),url.searchParams.get('dark')==='1');
+      send(res,201,{ok:true,width:stored.width,height:stored.height});return true;
+    }
     const imageUpload=p.match(/^\/api\/ui\/boards\/([^/]+)\/assets$/);
     if(imageUpload){
       if(req.method!=='POST'){send(res,405,{error:'POST an image file'});return true;}
@@ -496,14 +530,36 @@ export function startHttp(opts: {
       } else send(res, 405, { error: "GET or POST required" });
       return true;
     }
+    // An agent's channel proposal (board_channel open) is approved or declined here, by a
+    // person on the board page; the agent API has no way to decide one.
+    const channelProposal=p.match(/^\/api\/ui\/boards\/([^/]+)\/channels\/proposals\/([^/]+)\/(approve|decline)$/);
+    if(channelProposal&&channels){
+      const board=decodeURIComponent(channelProposal[1]);
+      if(!BoardHost.validId(board)||!host.exists(board))throw new InputError('unknown board');
+      if(req.method!=='POST'){send(res,405,{error:'POST required'});return true;}
+      if(!req.headers.origin){send(res,403,{error:'channel proposals are approved or declined from the board page'});return true;}
+      const body=await readBody(req);
+      const by=typeof body.by==='string'&&body.by.trim()?body.by.trim().slice(0,60):cfg.humanName;
+      const out=channels.decide(board,decodeURIComponent(channelProposal[2]),channelProposal[3] as 'approve'|'decline',by);
+      log(`channel proposal ${board}/${out.proposal.id}: ${out.proposal.status} by ${by}`);
+      send(res,200,{ok:true,...out});
+      return true;
+    }
     const channelRoute=p.match(/^\/api\/ui\/boards\/([^/]+)\/channels(?:\/([^/]+)\/revoke)?$/);
     if(channelRoute&&channels){
       const board=decodeURIComponent(channelRoute[1]);
       if(!BoardHost.validId(board)||!host.exists(board))throw new InputError('unknown board');
-      if(req.method==='GET'&&!channelRoute[2])send(res,200,{channels:channels.list(board)});
+      if(req.method==='GET'&&!channelRoute[2])send(res,200,{channels:channels.views(board),proposals:channels.proposalsOf(board)});
       else if(req.method==='POST'){
         const body=await readBody(req);
         if(channelRoute[2])send(res,200,channels.revoke(board,decodeURIComponent(channelRoute[2])));
+        // No arrowId: a link channel between two frames chosen by name (any pages), anchored
+        // to a pair of portal stickies the server creates. From the board page only.
+        else if(body.arrowId===undefined||body.arrowId===null){
+          if(!Array.isArray(body.members)||!body.members.every(m=>typeof m==='string'))throw new InputError('explicit members required: two frame ids (with arrowId for an arrow channel)');
+          if(!req.headers.origin){send(res,403,{error:'frames are connected by name from the board page'});return true;}
+          send(res,200,channels.view(channels.enrollLink(board,body.members as string[])));
+        }
         else {if(typeof body.arrowId!=='string'||!Array.isArray(body.members)||!body.members.every(m=>typeof m==='string'))throw new InputError('arrowId and explicit members required');send(res,200,channels.enroll(board,body.arrowId,body.members as string[]));}
       }else send(res,405,{error:'GET or POST required'});
       return true;
@@ -651,6 +707,14 @@ export function startHttp(opts: {
     }
     if (p === "/api/ui/debug/perf") {
       send(res, 200, { ...perfSnapshot(url.searchParams.get("reset") === "1"), rooms: host.all().map((r) => r.stats()) });
+      return true;
+    }
+    // The lifecycle machine beside today's status writers (server/lifecycle-parity.ts):
+    // what it disagreed with since the server started, and every loaded frame as stored now.
+    if (p === "/api/ui/debug/lifecycle-parity") {
+      if (req.method !== "GET" && req.method !== "HEAD") send(res, 405, { error: "GET required" });
+      else if (!watcher.parity) send(res, 404, { error: "lifecycle parity check is not running" });
+      else send(res, 200, watcher.parity.report(host.all().map((r) => ({ id: r.id, records: r.records.values() }))));
       return true;
     }
     if (p === "/api/ui/debug/directory") {
@@ -881,11 +945,15 @@ export function startHttp(opts: {
       return true;
     }
     // Fork a frame's conversation into a new sibling frame with a new agent (frame-fork.ts).
+    // Body {rowId}: "Fork from here", from that message (a timeline row's `id`) instead of the
+    // end. A body without rowId (or none, or one that is not JSON) forks from the end.
     m = p.match(/^\/api\/ui\/boards\/([^/]+)\/frames\/([^/]+)\/fork$/);
     if (m && req.method === "POST") {
       const boardId = decodeURIComponent(m[1]);
       if (!host.exists(boardId)) return send(res, 404, { error: `no board ${boardId}` }), true;
-      send(res, 202, await forkFrame(host.get(boardId), watcher, bridge, decodeURIComponent(m[2])));
+      const body = await readBody(req).catch(() => ({}) as Record<string, unknown>);
+      if ("rowId" in body && (typeof body.rowId !== "string" || !body.rowId)) throw new InputError("rowId must be the id of a conversation row");
+      send(res, 202, await forkFrame(host.get(boardId), watcher, bridge, decodeURIComponent(m[2]), typeof body.rowId === "string" ? { rowId: body.rowId } : undefined));
       return true;
     }
     m = p.match(/^\/api\/ui\/boards\/([^/]+)\/outline$/);
@@ -911,15 +979,31 @@ export function startHttp(opts: {
       catch(error){send(res,503,{error:(error as Error).message});}
       return true;
     }
-    // Opt-in "Smarter with AI" starter cards: one small-model call per user per 4 hours.
+    // Next-step suggestion cards for a start form: a small-model call, cached and rate-limited
+    // per user (quick-starts-ai.ts), made from what the canvas sends plus what the nearby
+    // frames' agents reported and the state of the workspace repository.
     if (p === "/api/ui/quick-starts/suggest" && req.method === "POST") {
       const body = await readBody(req);
       try {
-        const r = await quickStartsAi.suggest(String(body.by ?? ""), body.prompts, body.context);
+        const signals = cleanSignals(body, await repoSignals.get(cfg.defaultCwd));
+        if (signals.context?.board.length && body.boardId) {
+          let records: ReturnType<typeof host.get>["records"] | null = null;
+          try { records = host.get(String(body.boardId)).records; } catch { /* unknown board: no reports */ }
+          if (records) await addReports(signals.context.board, (id) => { const agentId = records.get(id)?.meta?.paseo?.agentId; return typeof agentId === "string" ? agentId : undefined; }, transcripts);
+        }
+        quickStartsAi ??= new QuickStartsAi(modelRunner(log), Date.now, log);
+        const boardId = String(body.boardId ?? "") || "main";
+        const cwd = await ensureBoardDirectory(cfg, boardId).catch(() => os.tmpdir());
+        const r = await quickStartsAi.suggest(String(body.by ?? ""), signals, { key: boardId, cwd });
         send(res, "retryAfterMs" in r ? 429 : 200, r);
       } catch (error) {
         send(res, 503, { error: (error as Error).message });
       }
+      return true;
+    }
+    // The latest suggestion calls (signals present, cards returned), to review their quality.
+    if (p === "/api/ui/quick-starts/recent" && req.method === "GET") {
+      send(res, 200, { calls: quickStartsAi?.recent() ?? [] });
       return true;
     }
     if (p === "/api/ui/recheck-start" && req.method === "POST") {

@@ -17,6 +17,7 @@ import { deferredStart } from "./deferred-start";
 import { DirectoryRecordingSource } from './recording-watch';
 import { ObsRecordingSource } from './video-source';
 import path from 'node:path';
+import {queueChannelPrompt} from './channel-delivery';
 import { FrameChannels } from './frame-channels';
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { AgentApi } from "./agent-api";
@@ -25,11 +26,12 @@ import { GitHubPrTracker } from "./widgets/github-pr";
 import { claudeActivitySource } from "./widgets/claude-activity";
 import { loadConfig } from "./config";
 import { FrameWatcher } from "./frame-watcher";
+import { LifecycleParity } from "./lifecycle-parity";
 import { FrameHistory } from "./frame-history";
 import { FrameArchive } from "./frame-archive";
 import { startHttp } from "./http";
 import { loadBasicAuth } from "./basic-auth";
-import { localDaemonUrl, PaseoBridge, statusOf } from "./paseo-bridge";
+import { localDaemonUrl, PaseoBridge, agentBusy, statusOf } from "./paseo-bridge";
 import { BoardHost } from "./room-host";
 import { TranscriptHub } from "./transcripts";
 import { SubagentTracker } from "./subagents";
@@ -62,6 +64,7 @@ export function contribute(server: PluginServerContext) {
   const metrics=hostMetrics(log,path.join(cfg.stateDir,"host-operations.jsonl"));
   const bridge = new PaseoBridge(PLUGIN_ID, DAEMON_WS, log, bunnyEnv("DAEMON_WS")?undefined:()=>localDaemonUrl(DAEMON_WS));
   const watcher = new FrameWatcher(cfg, bridge, log);
+  watcher.parity = new LifecycleParity(log);
   const history = new FrameHistory(path.join(cfg.stateDir, "frame-history"), cfg, log);
   watcher.history = history;
   const archive = new FrameArchive(path.join(cfg.stateDir, "frame-archive"), history, log);
@@ -118,14 +121,17 @@ export function contribute(server: PluginServerContext) {
     remote.onSnapshot = (id, snap) => transcripts.pushRemote(id, snap);
     remote.onStatus = (id, status) => watcher.onRemoteStatus(id, status);
   }
-  channels = new FrameChannels(path.join(cfg.stateDir,'frame-channels'), id => host.peek(id), async (board,frame,agentId,text) => {
+  const deliverToMember = async (board:string,frame:string,agentId:string,text:string,messageId:string,channelId:string) => {
     const target=host.get(board).records.get(frame);
-    if(target?.meta?.paseo?.agentId!==agentId) return 'unknown';
-    if(target.meta.paseo.host) return (await watcher.promptRemote(agentId,text)).delivery==='accepted_by_paseo'?'accepted':'unknown';
-    if(!bridge.api) throw new Error('Paseo not connected');
-    await bridge.api.agents.ref(agentId).send(text);return 'accepted';
-  });
+    if(target?.meta?.paseo?.agentId!==agentId || !prompts) return 'unknown' as const;
+    return queueChannelPrompt(prompts,{boardId:board,frameId:frame,agentId,text,messageId,channelId,host:target.meta.paseo.host??null});
+  };
+  channels = new FrameChannels(path.join(cfg.stateDir,'frame-channels'), id => host.peek(id), deliverToMember, async (...args) => {
+    const status=await deliverToMember(...args).catch((e:Error)=>{log(`channel notice ${args[0]}/${args[1]}: ${e.message}`);return 'unknown';});
+    log(`channel notice ${args[0]}/${args[1]} ${args[2]}: ${status}`);
+  }, { room: id => host.exists(id) ? host.get(id) : null });
   prompts = new PromptOutbox(path.join(cfg.stateDir, "prompt-outbox"), r => {
+    if(r.kind==='channel'&&r.channelId&&!channels?.deliveryCurrent(r.channelId,r.frameId,r.agentId))return false;
     const ref = watcher.boundRef(r.agentId);
     const binding=host.peek(r.boardId)?.get(r.frameId)?.meta?.paseo;
     return binding?.agentId===r.agentId && (binding.host??null)===r.host && ref?.boardId === r.boardId && ref.frameId === r.frameId;
@@ -171,17 +177,17 @@ export function contribute(server: PluginServerContext) {
       if(!fresh){remote.watchStatus(r.host,r.agentId);remote.prefetch(r.agentId);}
       const respondingToInput=(r.kind??'prompt')==='prompt'&&snap?.status==='needs-permission';
       const d=sendNow(caps,fresh?snap!.status==='running'||snap!.status==='needs-permission':null,r.text,respondingToInput);
-      return {wait:d.send?null:d.reason,mode:d.mode};
+      return {wait:d.send?null:d.reason,mode:d.mode,inputReply:respondingToInput&&d.send};
     }
     const aux=bridge.aux;if(!aux?.isConnected)return {wait:'waiting-host'};
     const agent=(await withDaemonRead(()=>aux.fetchAgent(r.agentId)))?.agent as {provider?:string;status?:string;activeTurn?:unknown;pendingPermissions?:unknown[]}|undefined;
     if(!agent)return {wait:null}; // the send itself reports a missing agent
-    const busy=agent.status==='running'||agent.status==='initializing'||!!agent.activeTurn;
+    const busy=agentBusy(agent);
     // Pending questions can coexist with a running status (asynchronous input).
     // An explicit reply must not wait for the question's turn to finish.
     const respondingToInput=(r.kind??'prompt')==='prompt'&&(agent.status==='needs-permission'||!!agent.pendingPermissions?.length);
-    const d=sendNow(sendCapabilities({host:null,provider:agent.provider}),busy,r.text,respondingToInput);
-    return {wait:d.send?null:d.reason,mode:d.mode};
+    const d=sendNow(sendCapabilities({host:null,provider:agent.provider,background:r.kind==='channel'}),busy,r.text,respondingToInput);
+    return {wait:d.send?null:d.reason,mode:d.mode,inputReply:respondingToInput&&d.send};
   };
   prompts.startPending=r=>watcher.startPendingFor(r.agentId);
   prompts.requireStart=true;
@@ -190,7 +196,10 @@ export function contribute(server: PluginServerContext) {
     if(item.type==='user_message'&&typeof wireId==='string')prompts?.noteLanded(agentId,wireId);
   };
   watcher.promptOutbox = prompts;
-  prompts.onChange = receipt => watcher.promptReceiptChanged(receipt);
+  prompts.onChange = receipt => {
+    if(receipt.kind==='channel')channels?.deliveryChanged(receipt.messageId,receipt.status);
+    else watcher.promptReceiptChanged(receipt);
+  };
   const organizer = new Organizer(cfg, host, watcher, bridge, log);
   const importer = new BoardImporter(cfg, host, watcher, directory, bridge, log, remote?.enabled ? remote : null);
 

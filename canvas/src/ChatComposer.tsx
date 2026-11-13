@@ -1,9 +1,10 @@
+import { B } from "./bunnyTheme";
 import { AppIcon } from "./components/AppIcon";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { AgentView } from "./agents";
 import { stop } from "./TimelineItemView";
 import { rememberAgentSend } from "./jumpPaletteModel";
-import { PhotoIcon, PhotoTray } from "./mobile/PhotoTray";
+import { PhotoTray } from "./mobile/PhotoTray";
 import { canWithdraw, composerBegin, composerEdit, composerSends, composerSettle, composerSettleTracked, type ComposerState, composerWithdraw, deliveryLabel, enterSends, newMessageId, pendingSend, previousSend, type PromptResponse, restoreComposer, type Sent, sendId, settleSend } from "./frameChatDelivery";
 import { agentSummaryChanged } from "./lastSent";
 
@@ -158,8 +159,16 @@ export async function sendReply(agentId: string, text: string): Promise<Sent | n
   return stateFor(agentId).sent;
 }
 
-// Photos picked on the phone, per agent like drafts, for the page's lifetime.
+// Image drafts are shared across every composer for the same agent.
 const photoDrafts = new Map<string, File[]>();
+const noPhotos: File[] = [];
+const photoListeners = new Map<string, Set<() => void>>();
+function subscribePhotos(agentId: string, notify: () => void) {
+  let set = photoListeners.get(agentId);
+  if (!set) photoListeners.set(agentId, set = new Set());
+  set.add(notify);
+  return () => { set.delete(notify); if (!set.size) photoListeners.delete(agentId); };
+}
 
 const smallBtn = (color: string): React.CSSProperties => ({ border: `1px solid ${color}`, color, background: "light-dark(#fff, var(--bunny-surface))", borderRadius: 6, padding: "0 7px", font: "inherit", lineHeight: "16px", cursor: "pointer" });
 
@@ -174,9 +183,8 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
   compact?: boolean;
   large?: boolean;
   placeholder?: string;
-  // Phone only: the reply box's height cap, a photo button whose pictures go to the frame
-  // (and its agent) through the same path as a desktop drop, and what to do after a send
-  // (close the keyboard and collapse the thread).
+  // Image attachments go to the frame and its agent through the existing upload path.
+  // The phone also caps the box height and collapses the thread after a send.
   maxHeight?: number;
   attach?: (files: File[]) => Promise<void>;
   onSent?: () => void;
@@ -186,12 +194,14 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
   // The sidebar's Stop / Continue row (TurnControls), shown right above the box.
   turnControls?: React.ReactNode;
 }) {
-  const [photos, setPhotosState] = useState<File[]>(() => photoDrafts.get(agentId) ?? []);
+  const photos = useSyncExternalStore((notify) => subscribePhotos(agentId, notify), () => photoDrafts.get(agentId) ?? noPhotos);
   const setPhotos = (next: File[]) => {
     if (next.length) photoDrafts.set(agentId, next);
     else photoDrafts.delete(agentId);
-    setPhotosState(next);
+    for (const notify of photoListeners.get(agentId) ?? []) notify();
   };
+  const dropRoot = useRef<HTMLDivElement>(null);
+  const [draggingImages, setDraggingImages] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
   // Edit / Remove on a queued reply: which one is being taken back, and why it could not be.
   const [withdrawing, setWithdrawing] = useState<string | null>(null);
@@ -217,6 +227,52 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
   const box = useRef<HTMLTextAreaElement>(null);
   const previews = useMemo(() => photos.map((f) => URL.createObjectURL(f)), [photos]);
   useEffect(() => () => previews.forEach((u) => URL.revokeObjectURL(u)), [previews]);
+  // Use the conversation pane as the drop target, including when embedded in a portal.
+  // Stop file events here so tldraw cannot also place an unsubmitted attachment.
+  useEffect(() => {
+    const target = dropRoot.current?.closest("[data-chat-drop]") ?? dropRoot.current;
+    if (!target || !attach) return;
+    const add = (files: File[]) => {
+      if (!canPrompt || sendingPhotos) { setPhotoError("Wait until image sending is available."); return; }
+      const images = files.filter(f => f.type.startsWith("image/"));
+      const current = photoDrafts.get(agentId) ?? [];
+      setPhotoError(images.length !== files.length ? "Only images can be attached here." : current.length + images.length > 6 ? "Attach up to six images at a time." : null);
+      setPhotos([...current, ...images].slice(0, 6));
+      box.current?.focus();
+    };
+    const over = (event: Event) => {
+      const e = event as DragEvent;
+      if (!e.dataTransfer?.types.includes("Files")) return;
+      e.preventDefault(); e.stopPropagation();
+      e.dataTransfer.dropEffect = canPrompt && !sendingPhotos ? "copy" : "none";
+      setDraggingImages(true);
+    };
+    const leave = (event: Event) => {
+      if (!target.contains((event as DragEvent).relatedTarget as Node | null)) setDraggingImages(false);
+    };
+    const drop = (event: Event) => {
+      const e = event as DragEvent;
+      if (!e.dataTransfer?.types.includes("Files")) return;
+      e.preventDefault(); e.stopPropagation(); setDraggingImages(false);
+      add(Array.from(e.dataTransfer.files));
+    };
+    const paste = (event: Event) => {
+      const e = event as ClipboardEvent;
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (!files.some(f => f.type.startsWith("image/"))) return;
+      e.preventDefault(); e.stopPropagation(); add(files);
+    };
+    target.addEventListener("dragover", over);
+    target.addEventListener("dragleave", leave);
+    target.addEventListener("drop", drop);
+    target.addEventListener("paste", paste);
+    return () => {
+      target.removeEventListener("dragover", over);
+      target.removeEventListener("dragleave", leave);
+      target.removeEventListener("drop", drop);
+      target.removeEventListener("paste", paste);
+    };
+  }, [agentId, !!attach, canPrompt, sendingPhotos]);
   const state = useSyncExternalStore((n) => subscribe(agentId, n), () => stateFor(agentId));
   const { text, sent } = state;
   const earlier = state.earlier ?? [];
@@ -231,6 +287,7 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
   // text typed while it is in flight is a new draft. resend: "Send again" for the failed
   // send; only the block the composer restored for it leaves the box (composerBegin).
   const submit = async () => {
+    if (!canPrompt || sendingPhotos) return;
     const files = photos;
     const hasText = !!stateFor(agentId).text.trim();
     if (files.length && attach) {
@@ -270,6 +327,10 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
   };
   usePendingChecks(agentId, state);
 
+  // Share dimensions so single-line controls align in every composer layout.
+  const controlHeight = large ? 44 : compact ? 32 : 38;
+  const controlRadius = large ? 12 : 8;
+
   // Phone: the box grows with its text up to its cap. iOS Safari has no field-sizing (the
   // desktop path), so it is sized here: one line at least, never shorter than its text.
   useLayoutEffect(() => {
@@ -285,7 +346,7 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
   // in the thread and in the "You: …" strip above it (hold that for the whole text).
   const youLine: React.CSSProperties = large ? { color: "light-dark(#64748b, var(--bunny-muted))", minWidth: 0, maxWidth: "45%", flex: "0 1 auto", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } : { color: "light-dark(#64748b, var(--bunny-muted))", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, maxWidth: "100%", flex: "0 1 auto" };
   return (
-    <div data-testid="composer" onPointerDown={stop} onPointerUp={stop} onKeyDown={stop} style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, padding: compact ? "6px 6px 6px" : "8px 10px 10px", borderTop: "1px solid light-dark(#e2e8f0, var(--bunny-line))", background: "light-dark(#fff, var(--bunny-surface))", pointerEvents: "all" }}>
+    <div ref={dropRoot} data-testid="composer" onPointerDown={stop} onPointerUp={stop} onKeyDown={stop} style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, padding: compact ? "6px 6px 6px" : "8px 10px 10px", borderTop: "1px solid light-dark(#e2e8f0, var(--bunny-line))", background: "light-dark(#fff, var(--bunny-surface))", pointerEvents: "all" }}>
       {earlier.map((e) => {
         const l = deliveryLabel(e, reply?.at ?? null, status);
         return (
@@ -323,6 +384,7 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
         </details>
       ) : null}
       {turnControls}
+      {draggingImages ? <div role="status" style={{ fontSize: 12, color: B.muted }}>Drop images to attach</div> : null}
       {attach ? <PhotoTray photos={photos} previews={previews} setPhotos={setPhotos} disabled={sendingPhotos} /> : null}
       {photoError ? <div role="alert" data-testid="reply-photo-error" style={{ fontSize: 11, color: "light-dark(#b00020, hsl(349 88% 74%))" }}>{photoError}</div> : null}
       <form onSubmit={(e) => { e.preventDefault(); void submit(); }} style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
@@ -331,8 +393,8 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
             <input ref={picker} type="file" accept="image/*" multiple hidden data-testid="reply-photo-input"
               onChange={(e) => { const picked = Array.from(e.target.files ?? []); e.target.value = ""; if (picked.length) { setPhotoError(null); setPhotos([...photos, ...picked].slice(0, 6)); } }} />
             <button type="button" data-testid="reply-photo" aria-label="Add photos" title="Add photos" disabled={!canPrompt || sendingPhotos} onClick={() => picker.current?.click()}
-              style={{ flex: "none", width: 44, height: 44, borderRadius: 12, border: "1px solid light-dark(#cbd5e1, hsl(213 35% 39%))", background: "light-dark(#fff, var(--bunny-surface))", color: "light-dark(#2E1F16, var(--bunny-ink))", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <PhotoIcon />
+              style={{ flex: "none", width: controlHeight, height: controlHeight, borderRadius: controlRadius, border: "1px solid light-dark(#cbd5e1, hsl(213 35% 39%))", background: "light-dark(#fff, var(--bunny-surface))", color: "light-dark(#2E1F16, var(--bunny-ink))", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <AppIcon name="image" size={large ? 24 : compact ? 16 : 20} />
             </button>
           </>
         ) : null}
@@ -350,11 +412,11 @@ export function ChatComposer({ agentId, view, status, canPrompt, unavailable, co
               void submit();
             }
           }}
-          style={{ flex: 1, minWidth: 0, boxSizing: "border-box", resize: "none", border: "1px solid light-dark(#cbd5e1, hsl(213 35% 39%))", borderRadius: 10, padding: compact ? "5px 8px" : "8px 10px", font: "inherit", fontSize: large ? 16 : compact ? 12 : 13, lineHeight: compact ? "16px" : "20px", minHeight: compact ? 28 : 38, maxHeight: maxHeight ?? (compact ? 80 : 160), overflowY: "auto", fieldSizing: "content", background: "light-dark(#fff, var(--bunny-surface))", color: "light-dark(#0f172a, hsl(222 50% 74%))" } as React.CSSProperties}
+          style={{ flex: 1, minWidth: 0, boxSizing: "border-box", resize: "none", border: "1px solid light-dark(#cbd5e1, hsl(213 35% 39%))", borderRadius: controlRadius, padding: large ? "11px 10px" : compact ? "7px 8px" : "8px 10px", font: "inherit", fontSize: large ? 16 : compact ? 12 : 13, lineHeight: compact ? "16px" : "20px", minHeight: controlHeight, maxHeight: maxHeight ?? (compact ? 80 : 160), overflowY: "auto", fieldSizing: "content", background: "light-dark(#fff, var(--bunny-surface))", color: "light-dark(#0f172a, hsl(222 50% 74%))" } as React.CSSProperties}
         />
         {busyAction && !text.trim() && !photos.length && !sendingPhotos ? busyAction : (
         <button type="submit" data-testid="reply-send" aria-label="Send" disabled={!ready}
-          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", width: compact ? 28 : 38, height: compact ? 28 : 38, borderRadius: compact ? 8 : 10, border: "none", background: ready ? "#2f80ed" : "light-dark(#cbd5e1, hsl(213 27% 21%))", color: "#fff", cursor: ready ? "pointer" : "default", font: `${compact ? 13 : 16}px system-ui` }}>
+          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", width: controlHeight, height: controlHeight, borderRadius: controlRadius, border: "none", background: ready ? "#2f80ed" : "light-dark(#cbd5e1, hsl(213 27% 21%))", color: "#fff", cursor: ready ? "pointer" : "default", font: `${compact ? 13 : 16}px system-ui` }}>
           {sendingPhotos ? "…" : <AppIcon name="arrow-up" size={compact ? 16 : 20} />}
         </button>
         )}

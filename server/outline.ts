@@ -167,9 +167,9 @@ function freeSlots(records: RecMap, frame: Rec, n: number): string[] {
   return out;
 }
 
-function cap(text: string): string {
+function cap(text: string, hint = 'Use format:"json" with ids to narrow.'): string {
   if (text.length <= MAX_CHARS) return text;
-  return `${text.slice(0, MAX_CHARS)}\n… truncated (${text.length} chars). Use format:"json" with ids to narrow.`;
+  return `${text.slice(0, MAX_CHARS)}\n… truncated (${text.length} chars). ${hint}`;
 }
 
 export function frameOutline(records: RecMap, frameId: string, ctx: OutlineContext | null = null): string {
@@ -199,11 +199,98 @@ export function frameOutline(records: RecMap, frameId: string, ctx: OutlineConte
   return cap(lines.join("\n"));
 }
 
-export function boardOutline(records: RecMap, ownFrameId?: string): string {
+// Find frames by name: one line per frame (nested ones included, any page) whose name or
+// agent title contains every whitespace-separated term, case-insensitive. Only pages with a
+// match get a heading, so a big board answers in a few lines instead of a truncated outline.
+function findFrames(records: RecMap, query: string, ownFrameId: string | undefined, titleOf: ((agentId: string) => string | null | undefined) | undefined): string {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = quote(query.trim(), 60);
+  const pages = [...records.values()].filter((r) => r.typeName === "page");
+  const byPage = new Map<string, Array<{ f: Rec; line: string }>>();
+  let total = 0;
+  for (const f of records.values()) {
+    if (!isShape(f) || f.type !== "frame") continue;
+    const chain = ancestors(records, f);
+    const top = chain.length ? records.get(chain[chain.length - 1])! : f;
+    if (records.get(top.parentId)?.typeName !== "page") continue;
+    total++;
+    const p = f.meta?.paseo ?? {};
+    // The agent's own title where it differs from the frame's: the last name both agreed on,
+    // and the one Paseo reports now.
+    const titles = [p.syncedName, p.agentId ? titleOf?.(String(p.agentId)) : null].filter((t): t is string => typeof t === "string" && !!t.trim());
+    const hay = [String(f.props?.name ?? ""), ...titles].join("\n").toLowerCase();
+    if (!terms.every((t) => hay.includes(t))) continue;
+    const outer = enclosingFrame(records, f);
+    const abs = absPos(records, f);
+    const size = shapeSize(f);
+    const title = titles.find((t) => t.trim() !== String(f.props?.name ?? "").trim());
+    const line =
+      `  ${frameHeader(f)} @page(${Math.round(abs.x)},${Math.round(abs.y)}) ${Math.round(size.w)}x${Math.round(size.h)} · ${children(records, f.id).length} shapes` +
+      `${title ? ` · agent title ${quote(title, 60)}` : ""}${outer ? ` · inside frame ${quote(outer.props?.name || "(unnamed)", 40)} (${outer.id})` : ""}${f.id === ownFrameId ? " ← YOUR FRAME" : ""}`;
+    const list = byPage.get(top.parentId) ?? [];
+    list.push({ f, line });
+    byPage.set(top.parentId, list);
+  }
+  const matched = [...byPage.values()].reduce((n, l) => n + l.length, 0);
+  if (!matched) return `No frame name or agent title contains ${shown} (${total} frame${total === 1 ? "" : "s"} on ${pages.length} page${pages.length === 1 ? "" : "s"}). Every term must match; try fewer or shorter terms.`;
+  const lines = [`Frames matching ${shown}: ${matched} of ${total}.`];
+  let used = lines[0].length;
+  let listed = 0;
+  for (const page of pages) {
+    const hits = byPage.get(page.id);
+    if (!hits) continue;
+    hits.sort((a, b) => sortReading({ ...a.f, ...absPos(records, a.f) }, { ...b.f, ...absPos(records, b.f) }));
+    const head = `page ${quote(page.name)} (${page.id})`;
+    // Whole lines only: a match is never cut in half by the length cap.
+    if (used + head.length + hits[0].line.length + 2 > MAX_CHARS) break;
+    lines.push(head);
+    used += head.length + 1;
+    for (const h of hits) {
+      if (used + h.line.length + 1 > MAX_CHARS) break;
+      lines.push(h.line);
+      used += h.line.length + 1;
+      listed++;
+    }
+  }
+  if (listed < matched) lines.push(`… and ${matched - listed} more matching frame${matched - listed === 1 ? "" : "s"}; add a term to narrow the query.`);
+  return lines.join("\n");
+}
+
+// A page read contains its full shape tree and only bindings whose endpoints are
+// both on that page. The page record supplies identity; other pages/assets stay out.
+export function recordsOnPage(records: RecMap, pageId: string): RecMap {
+  const selected: RecMap = new Map();
+  const page = records.get(pageId);
+  if (page?.typeName === "page") selected.set(pageId, page);
+  for (const r of records.values()) {
+    if (!isShape(r)) continue;
+    const chain = ancestors(records, r);
+    const top = chain.length ? records.get(chain[chain.length - 1])! : r;
+    if (top.parentId === pageId) selected.set(r.id, r);
+  }
+  for (const r of records.values()) {
+    if (r.typeName === "binding" && selected.has(r.fromId) && selected.has(r.toId)) selected.set(r.id, r);
+  }
+  return selected;
+}
+
+export function boardOutline(records: RecMap, ownFrameId?: string, opts: { pageId?: string; ctx?: OutlineContext | null; query?: string; titleOf?: (agentId: string) => string | null | undefined } = {}): string {
+  if (opts.pageId) records = recordsOnPage(records, opts.pageId);
+  if (typeof opts.query === "string" && opts.query.trim()) return findFrames(records, opts.query, ownFrameId, opts.titleOf);
   const lines: string[] = [];
   const pages = [...records.values()].filter((r) => r.typeName === "page");
+  if (!opts.pageId) lines.push("Pages (read one with scope:'board', pageId):", ...pages.map(page => `  ${quote(page.name)} (${page.id})`), "");
   for (const page of pages) {
     lines.push(`page ${quote(page.name)} (${page.id})`);
+    if (opts.pageId) {
+      const shapes = [...records.values()].filter(isShape).sort((a, b) => sortReading({ ...a, ...absPos(records, a) }, { ...b, ...absPos(records, b) }) || a.id.localeCompare(b.id));
+      for (const s of shapes) {
+        const abs = absPos(records, s);
+        const label = s.type === "frame" ? frameHeader(s) : componentOutline(s as never, opts.ctx ?? null) || describeShape(s, 200);
+        lines.push(`  ${label}${s.type === "frame" ? "" : ` (${s.id})`} @page(${Math.round(abs.x)},${Math.round(abs.y)})${s.parentId === page.id ? "" : ` inside ${s.parentId}`}${portalSuffix(records, s)}`);
+      }
+      continue;
+    }
     for (const s of children(records, page.id)) {
       const abs = absPos(records, s);
       const size = shapeSize(s);
@@ -222,5 +309,7 @@ export function boardOutline(records: RecMap, ownFrameId?: string): string {
       }
     }
   }
-  return cap(lines.join("\n"));
+  return cap(lines.join("\n"), opts.pageId
+    ? `Continue with board_read({scope:'board',pageId:${JSON.stringify(opts.pageId)},format:'json',offset:0,limit:300}); follow nextOffset until null.`
+    : "Read one page with scope:'board', pageId, or use format:'json', offset:0, limit:300 and follow nextOffset until null.");
 }

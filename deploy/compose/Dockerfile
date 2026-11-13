@@ -15,6 +15,9 @@ RUN --mount=type=secret,id=extra_ca,required=false --mount=type=cache,target=/ro
     if [ -s /run/secrets/extra_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/extra_ca; fi; \
     npm ci --no-audit --no-fund && npm ci --prefix canvas --no-audit --no-fund
 COPY . .
+# Restrictive checkout umasks must not make shipped source unreadable to USER node.
+# a+rX preserves executable files without making ordinary source executable.
+RUN chmod -R a+rX /src
 # The tldraw licence key comes in as a build secret (compose: tldraw_license), so it is not
 # stored in the image history; vite inlines VITE_TLDRAW_LICENSE_KEY into the canvas. No key:
 # tldraw enforces its licence at runtime. The value is never printed.
@@ -75,7 +78,7 @@ ENV HOME=/home/node \
     PASEO_RELAY_ENABLED=false \
     PASEO_DICTATION_ENABLED=false \
     PASEO_VOICE_MODE_ENABLED=false
-RUN chmod +x /usr/local/bin/runtime-entrypoint \
+RUN chmod 0755 /usr/local/bin/runtime-entrypoint \
  && mkdir -p /home/node/.paseo /home/node/.agent-auth/claude /home/node/.agent-auth/codex /data/board /workspaces \
  && chown -R node:node /home/node /data /workspaces
 USER node

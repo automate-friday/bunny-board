@@ -3,8 +3,13 @@ import { type Editor, type TLShapeId, useValue } from "tldraw";
 import { api } from "./api";
 import { MobileCtx } from "./mobile/mobileMode";
 import { channelBadge } from "./channelBadge";
+import { channelList, channelListError, setChannelRefresher } from "./channelState";
+import { type ChannelInfo, isArrowChannel, offersRev } from "./linkChannelModel";
 
-interface Channel { id: string; arrow: string; active: boolean; members: { frame: string; agentId: string }[]; messages: Record<string, { status: string }> }
+// This file draws arrow channels and reads the board's channel list for everyone (channelState.ts).
+// Link channels (anchor "link", arrow "", a pair of stickies) are in that list too; their
+// stickies, proposals and "Connect to…" are drawn by LinkChannels.tsx and ConnectPicker.tsx.
+type Channel = ChannelInfo;
 function endpoints(editor: Editor, arrow: string): string[] | null {
   const shape = editor.getShape(arrow as TLShapeId);
   if (shape?.type !== "arrow") return null;
@@ -17,7 +22,9 @@ function endpoints(editor: Editor, arrow: string): string[] | null {
   return agents.every(Boolean) && agents[0] !== agents[1] ? [start.toId, end.toId] : null;
 }
 export function Channels({ editor, boardId }: { editor: Editor; boardId: string }) {
-  const [channels, setChannels] = useState<Channel[]>([]);
+  const all = useValue(channelList);
+  // Only arrow channels have an arrow to badge; a link channel's `arrow` is "".
+  const channels = all.filter(isArrowChannel);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string[]>([]);
   const selected = useValue("channel-selection", () => editor.getOnlySelectedShape(), [editor]);
@@ -25,7 +32,7 @@ export function Channels({ editor, boardId }: { editor: Editor; boardId: string 
   // Where each channel's badge goes, and how big it may be: its arrow's box on screen. Arrows
   // off screen or hidden (the phone shows only the open frame) get none.
   const positions = useValue("channel-positions", () => {
-    const active = channels.filter(c => c.active);
+    const active = all.filter(c => c.active && isArrowChannel(c));
     if (!active.length) return [];
     const pageId = editor.getCurrentPageId();
     return active.flatMap(c => {
@@ -38,7 +45,7 @@ export function Channels({ editor, boardId }: { editor: Editor; boardId: string 
       if (br.x < vp.x || tl.x > vp.x + vp.w || br.y < vp.y || tl.y > vp.y + vp.h) return [];
       return [{ id: shape.id, point: editor.pageToScreen(bounds.center), w: br.x - tl.x, h: br.y - tl.y, zoom: editor.getZoomLevel() }];
     });
-  }, [editor, channels]);
+  }, [editor, all]);
   const lifecycle = useRef(0);
   const base = `/api/ui/boards/${encodeURIComponent(boardId)}/channels`;
   useEffect(() => {
@@ -52,11 +59,12 @@ export function Channels({ editor, boardId }: { editor: Editor; boardId: string 
         try {
           const r = await api<{ channels: Channel[] }>(base, { signal: AbortSignal.timeout(8000) });
           if (!alive) return;
-          setChannels(r.channels);
+          channelList.set(r.channels);
+          channelListError.set(null);
           setErrors(old => { const next = { ...old }; delete next.server; return next; });
-          for (const c of r.channels) if (!c.active) removed.add(c.arrow);
+          for (const c of r.channels) if (!c.active && isArrowChannel(c)) removed.add(c.arrow);
           ready = true;
-        } catch (e) { if (alive) setErrors(old => ({ ...old, server: (e as Error).message })); }
+        } catch (e) { if (alive) { channelListError.set((e as Error).message); setErrors(old => ({ ...old, server: (e as Error).message })); } }
       })();
       try { await fetchTask; } finally { fetchTask = null; }
     };
@@ -78,10 +86,23 @@ export function Channels({ editor, boardId }: { editor: Editor; boardId: string 
         if (r.typeName === "shape" && r.type === "arrow" && entry.changes.added[r.id]) pending.add(r.id);
       }
     }, { scope: "document", source: "user" });
+    // A link channel opens and closes through its stickies and through proposals, which reach
+    // this tab by sync: read the list again as soon as a channel sticky comes, goes or loses
+    // its mark, or the pending proposals change, instead of waiting for the next poll.
+    let soon: ReturnType<typeof setTimeout> | null = null;
+    const marked = (r: { typeName: string; type?: string; meta?: unknown }) => r.typeName === "shape" && r.type === "note" && !!(r.meta as { channel?: unknown } | undefined)?.channel;
+    const stopLinks = editor.store.listen(entry => {
+      const c = entry.changes;
+      const hit = Object.values(c.added).some(marked) || Object.values(c.removed).some(marked) ||
+        Object.values(c.updated).some(([before, after]) => marked(before) !== marked(after) || (after.typeName === "document" && offersRev(before.meta) !== offersRev(after.meta)));
+      if (!hit || soon) return;
+      soon = setTimeout(() => { soon = null; void refresh(true); }, 120);
+    }, { scope: "document" });
+    setChannelRefresher(() => refresh(true));
     const drain = setInterval(() => { if (!ready || editor.inputs.getIsPointing()) return; for (const id of pending) { pending.delete(id); void create(id, true); } }, 750);
     const poll = setInterval(() => void refresh(), 3000);
     void refresh();
-    return () => { alive = false; if (lifecycle.current === generation) lifecycle.current++; stop(); clearInterval(drain); clearInterval(poll); };
+    return () => { alive = false; if (lifecycle.current === generation) lifecycle.current++; stop(); stopLinks(); if (soon) clearTimeout(soon); setChannelRefresher(null); channelList.set([]); channelListError.set(null); clearInterval(drain); clearInterval(poll); };
   }, [editor, base]);
   const actions = useRef<{ create: (id: string) => void; revoke: (c: Channel) => void }>({ create: () => {}, revoke: () => {} });
   const active = channels.filter(c => c.active && positions.some(p => p.id === c.arrow));

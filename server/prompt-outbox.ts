@@ -1,3 +1,4 @@
+import {agentBusy} from './paseo-bridge';
 import {createHash, randomUUID} from 'node:crypto';
 import {mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync} from 'node:fs';
 import path from 'node:path';
@@ -12,7 +13,8 @@ export interface PromptIntent {
   boardId: string;
   frameId: string;
   text: string;
-  kind?: 'prompt'|'delta'|'stamp';
+  kind?: 'prompt'|'delta'|'stamp'|'channel';
+  channelId?: string;
   // Must reach a busy agent now, cancelling its running turn (a "stop" stamp): sent with
   // activeTurnBehavior 'interrupt' and never held for the turn to end.
   urgent?: boolean;
@@ -101,7 +103,7 @@ export class PromptOutbox {
   // Checked before each send: a reason to hold it (e.g. 'waiting-turn': the agent is busy
   // and its provider cannot take a message mid-turn without cancelling the turn), or null.
   // Held sends keep their place; later sends to that agent wait behind them.
-  hold:((r:PromptReceipt,signal:AbortSignal)=>Promise<{wait:string|null;mode?:string}>)|null=null;
+  hold:((r:PromptReceipt,signal:AbortSignal)=>Promise<{wait:string|null;mode?:string;inputReply?:boolean}>)|null=null;
   // The agent's start is still pending (server/core.ts): "agent not found" then means
   // "not created yet", so the send waits (waiting-start) instead of failing as missing.
   startPending:((r:PromptIntent)=>boolean)|null=null;
@@ -141,7 +143,7 @@ export class PromptOutbox {
     if(!input.text.trim()||input.text.length>max)throw fail(`Prompt must contain 1–${max} characters`,400);
     const id=key(input.agentId,input.messageId),prior=this.records.get(id);
     if(prior){
-      if(['text','host','boardId','frameId','kind'].some(k=>prior[k as keyof PromptIntent]!==input[k as keyof PromptIntent]))throw fail('messageId was already used for different content or binding',409);
+      if(['text','host','boardId','frameId','kind','channelId'].some(k=>prior[k as keyof PromptIntent]!==input[k as keyof PromptIntent]))throw fail('messageId was already used for different content or binding',409);
       return {...prior};
     }
     if(this.records.size>=5000)throw fail('Prompt receipt ledger is full; preserve receipts before accepting more work',503);
@@ -202,24 +204,38 @@ export class PromptOutbox {
   }
   private async drainHost(rows:PromptReceipt[],force:boolean) {
     const blocked=new Set<string>();
+    const channelOnly=new Set<string>();
+    const block=(id:string,channel=false)=>{
+      if(!blocked.has(id)&&channel)channelOnly.add(id);
+      if(!channel)channelOnly.delete(id);
+      blocked.add(id);
+    };
     for(const r of rows){
       if(this.stopped)return;
       if(r.status==='delivered'||r.status==='failed'||r.status==='sending')continue;
       if(r.status==='accepted'||r.status==='unknown'){
         // Until an uncertain send is settled, later prompts to that agent wait (ordering).
-        if(r.status==='unknown')blocked.add(r.agentId);
+        if(r.status==='unknown')block(r.agentId);
         if(r.retryAt<=this.now())await this.verify(r);
-        if(statusOf(r)==='queued')blocked.add(r.agentId);
+        if(statusOf(r)==='queued')block(r.agentId);
         continue;
       }
       if(!this.current(r)){
         r.status=r.attempts?'unknown':'failed';r.reason='binding-revoked';
         if(r.status==='unknown')r.retryAt=this.now();
-        this.save(r);blocked.add(r.agentId);continue;
+        this.save(r);block(r.agentId);continue;
       }
       // Behind an earlier message to the same agent that has not gone yet: say so.
       // An urgent message (a stop stamp) goes ahead of earlier ones held for the turn to end.
-      if(blocked.has(r.agentId)&&!r.urgent){if(!r.attempts)this.waiting(r,'waiting-earlier');continue;}
+      let decision:{wait:string|null;mode?:string;inputReply?:boolean}|undefined;
+      if(blocked.has(r.agentId)&&!r.urgent){
+        // An answer needed to finish the current turn must pass background messages
+        // waiting for that turn. Never pass uncertain sends or earlier user replies.
+        if(channelOnly.has(r.agentId)&&(r.kind??'prompt')==='prompt'&&this.hold){
+          try{decision=await this.hold(r,this.abort.signal);}catch{ /* keep queued */ }
+        }
+        if(!decision?.inputReply){if(!r.attempts)this.waiting(r,'waiting-earlier');if(r.kind!=='channel')channelOnly.delete(r.agentId);continue;}
+      }
       // Sent after another reply that has not arrived yet, or arrived but not gone out:
       // wait for it. Not blocking the agent, so that earlier reply can go first.
       if(r.prev&&!r.attempts){
@@ -232,25 +248,29 @@ export class PromptOutbox {
         }
         if(!prior||prior.status==='queued'||prior.status==='sending'||(prior.status==='unknown'&&!prior.final)){this.waiting(r,'waiting-earlier');continue;}
       }
-      if(!this.available(r)){this.waiting(r,'waiting-host');blocked.add(r.agentId);continue;}
-      if(!force&&r.retryAt>this.now()){blocked.add(r.agentId);continue;}
+      if(!this.available(r)){this.waiting(r,'waiting-host');block(r.agentId);continue;}
+      if(!force&&r.retryAt>this.now()){block(r.agentId);continue;}
       // A lost acknowledgement often hides a prompt that arrived (and may have started the
       // very turn a hold would wait for): ask before holding or resending.
       if(r.attempts>0&&await this.landedNow(r)){if(this.stopped)return;this.delivered(r);continue;}
       if(this.stopped||statusOf(r)==='delivered')continue;
       if(this.hold){
-        let decision:{wait:string|null;mode?:string};
         // A failed check is uncertainty, and uncertain means hold.
-        try{decision=await this.hold(r,this.abort.signal);}catch{decision={wait:r.host?'waiting-status':'waiting-host'};}
+        try{decision??=await this.hold(r,this.abort.signal);}catch{decision={wait:r.host?'waiting-status':'waiting-host'};}
         if(this.stopped)return;
         if(decision.mode&&decision.mode!==r.mode){r.mode=decision.mode;if(!decision.wait)this.saveQuiet(r);}
-        if(decision.wait){if(statusOf(r)!=='queued')continue;this.waiting(r,decision.wait);r.retryAt=this.now()+2000;blocked.add(r.agentId);continue;}
+        if(decision.wait){if(statusOf(r)!=='queued')continue;this.waiting(r,decision.wait);r.retryAt=this.now()+2000;block(r.agentId,r.kind==='channel'&&r.attempts===0&&(decision.wait==='waiting-turn'||decision.wait==='waiting-status'));continue;}
       }
       // Withdrawn while the hold check ran: never send it.
       if(statusOf(r)!=='queued')continue;
+      // Membership/binding may have changed while admission awaited a host read.
+      if(!this.current(r)){
+        r.status=r.attempts?'unknown':'failed';r.reason='binding-revoked';
+        if(r.attempts)r.retryAt=this.now();this.save(r);block(r.agentId);continue;
+      }
       await this.send(r);
       // Preserve per-agent ordering while a send is retrying or uncertain.
-      if(statusOf(r)!=='accepted'&&statusOf(r)!=='delivered')blocked.add(r.agentId);
+      if(statusOf(r)!=='accepted'&&statusOf(r)!=='delivered')block(r.agentId);
     }
   }
   // A queued send that cannot go yet says why (shown in the reply box and frame), persisted
@@ -393,5 +413,5 @@ export async function promptLanding(bridge:LandingReader,r:PromptReceipt,read=wi
   }
   if(signal?.aborted)throw Error('Prompt queue stopped');
   const agent=(await read(()=>aux.fetchAgent(r.agentId)))?.agent;
-  return {landed:false,running:agent?.status==='running'||agent?.status==='initializing'||!!agent?.activeTurn};
+  return {landed:false,running:agentBusy(agent)};
 }

@@ -3,7 +3,7 @@ import { FrameImages, FrameImagesMock, frameImageFile } from "./frame-images";
 import { hasRemoteRuntimeFiles, requestRuntimeFiles } from "./runtime-files";
 import { readArtifactFile } from "./artifact-files";
 import { writeCompressionSummary } from "./frame-compression";
-import { checklistProps } from '../shared/components/checklist';
+import { CHECKLIST_TYPE, checklistProps, patchChecklistItems } from '../shared/components/checklist';
 import { persistArtifactBundle, persistBundleFiles } from "./artifact-bundle";
 import { persistImage } from './file-intake';
 // The frame-scoped operations behind the board MCP tools. Every write is
@@ -50,6 +50,9 @@ import {
   shapeText,
 } from "./records";
 import type { BoardRoom, ChangeSource } from "./room-host";
+import { recordsOnPage } from "./outline";
+import { FrameSnapshots, SNAPSHOT_WAIT_MS } from "./frame-snapshots";
+import { clampArea } from "../shared/frame-snapshot";
 import { addReply, agentPersonId, orderedMessages, readThreads } from "../shared/comments";
 import { isAreaPortal, parsePortal, type PortalTarget } from "../shared/portal";
 
@@ -264,6 +267,9 @@ export class AgentApi {
   // Set by core.ts; keeps cloud session cards current (server/cloud-sessions.ts).
   cloudSessions: CloudSessions | null = null;
 
+  // Pictures of frames drawn by connected browsers (board_snapshot); http.ts takes their uploads.
+  readonly snapshots = new FrameSnapshots();
+
   private ctx(room: BoardRoom, frameId: string): { frame: Rec; agentId: string; source: ChangeSource; meta: object } {
     const frame = room.records.get(frameId);
     if (!frame || frame.type !== "frame") throw new InputError(`frame ${frameId} no longer exists on board ${room.id}`);
@@ -334,26 +340,49 @@ export class AgentApi {
     return { ok: true, threadId, messageId };
   }
 
-  async read(room: BoardRoom, frameId: string, body: { scope?: string; format?: string; ids?: string[] }) {
+  async read(room: BoardRoom, frameId: string, body: { scope?: string; format?: string; ids?: string[]; query?: unknown; pageId?: unknown; offset?: unknown; limit?: unknown }) {
     const { frame } = this.ctx(room, frameId);
+    if (body.scope !== undefined && body.scope !== "frame" && body.scope !== "board") throw new InputError("scope must be frame or board");
+    if (body.format !== undefined && body.format !== "outline" && body.format !== "json") throw new InputError("format must be outline or json");
+    if (body.pageId !== undefined && (body.scope !== "board" || typeof body.pageId !== "string" || room.records.get(body.pageId)?.typeName !== "page")) throw new InputError("pageId must identify an existing page on this board; use scope:'board' to list pages");
+    if (body.ids !== undefined && (body.format !== "json" || !Array.isArray(body.ids) || body.ids.some(id => typeof id !== "string" || !id))) throw new InputError("ids must be an array of nonempty record ids with format:'json'; ids select exact records, not descendants");
+    if ((body.offset !== undefined || body.limit !== undefined) && body.format !== "json") throw new InputError("offset and limit require format:'json'");
+    const offset = body.offset === undefined ? 0 : body.offset;
+    const limit = body.limit === undefined ? 300 : body.limit;
+    if (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0) throw new InputError("offset must be a nonnegative safe integer");
+    if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 300) throw new InputError("limit must be an integer from 1 to 300");
+    const pageId = typeof body.pageId === "string" ? body.pageId : undefined;
+    const selected = pageId ? recordsOnPage(room.records, pageId) : room.records;
+    const pages = [...selected.values()].filter(r => r.typeName === "page").map(r => ({ id: r.id, name: r.name }));
+    const pageInfo = body.scope === "board" ? { pages, ...(pageId ? { page: pages[0] } : {}) } : {};
+
+    // query: find frames by name across the whole board (outline only).
+    const query = typeof body.query === "string" && body.query.trim() ? body.query.trim().slice(0, 200) : undefined;
+    if (body.query !== undefined && body.query !== null && body.query !== "" && !query) throw new InputError("query must be text: words that the frame's name or agent title contains");
+    if (query && (body.scope !== "board" || body.format === "json")) throw new InputError("query finds frames by name on the whole board: use it with scope:'board' and the outline format");
     // Transcript cards in the frame: refresh their agents' latest messages first.
     const shown: string[] = [];
     for (const r of room.records.values()) if (isShape(r) && isComponent(r) && ancestors(room.records, r).includes(frameId)) shown.push(...componentAgentIds(r as never));
     if (shown.length && this.watcher.transcripts) await this.watcher.transcripts.prime(shown).catch(() => undefined);
     const queued = frame.meta?.paseo?.mode === "on-demand" ? this.watcher.takeQueued(room.id, frameId) : [];
     if (body.format === "json") {
-      const recs = [...room.records.values()].filter((r) => {
+      const recs = [...selected.values()].filter((r) => {
         if (body.ids?.length) return body.ids.includes(r.id);
         if (body.scope === "board") return r.typeName === "shape" || r.typeName === "binding";
         return isShape(r) && (r.id === frameId || ancestors(room.records, r).includes(frameId));
       });
-      return { frameId, records: recs.slice(0, 300), truncated: recs.length > 300, queuedDeltas: queued, locks: this.watcher.locks(room.id) };
+      // Stable ID order within each live read. Concurrent inserts/deletes can shift
+      // offsets; callers needing a complete snapshot must restart after board changes.
+      recs.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      const records = recs.slice(offset, offset + limit);
+      const nextOffset = offset + records.length < recs.length ? offset + records.length : null;
+      return { frameId, ...pageInfo, records, total: recs.length, offset, limit, nextOffset, truncated: nextOffset !== null, pagination: "Live records sorted by id; restart paging if the board changes.", queuedDeltas: queued, locks: this.watcher.locks(room.id) };
     }
-    const base = body.scope === "board" ? this.watcher.boardOutline(room.id, frameId) : this.watcher.frameOutline(room.id, frameId);
+    const base = body.scope === "board" ? this.watcher.boardOutline(room.id, frameId, query, pageId) : this.watcher.frameOutline(room.id, frameId);
     const locks = this.watcher.lockSummary(room.id);
     const comments = body.scope === "board" ? null : this.watcher.commentOutline(room, frameId);
     const outline = [locks, base, comments].filter(Boolean).join("\n");
-    return { frameId, outline: queued.length ? `${outline}\n\nUnread board deltas:\n${queued.join("\n\n")}` : outline, locks: this.watcher.locks(room.id) };
+    return { frameId, ...pageInfo, outline: queued.length ? `${outline}\n\nUnread board deltas:\n${queued.join("\n\n")}` : outline, locks: this.watcher.locks(room.id) };
   }
 
   async readImage(room: BoardRoom, frameId: string, body: { id?: unknown }) {
@@ -374,6 +403,30 @@ export class AgentApi {
     const after = resolve();
     if (after.file !== before.file || after.asset.id !== before.asset.id) throw new InputError("Image changed during read; retry");
     return {id:before.shape.id, name:String(before.asset.props?.name ?? "Image"), ...image};
+  }
+
+  // board_snapshot: the frame as a person's browser draws it (server/frame-snapshots.ts).
+  // Without a picture the note says why, so the agent does not wait or guess.
+  async snapshot(room: BoardRoom, frameId: string, body: { area?: unknown }) {
+    const { frame, agentId } = this.ctx(room, frameId);
+    const area = clampArea(body?.area, Number(frame.props.w), Number(frame.props.h));
+    if (typeof area === "string") throw new InputError(area);
+    const out = await this.snapshots.take(room, frameId, area);
+    if (this.ctx(room, frameId).agentId !== agentId) throw new ScopeError("Frame is now bound to another agent; retry from its conversation");
+    const who = this.cfg.humanName;
+    const part = area ? `the area at (${area.x},${area.y}) ${area.w}x${area.h} of your frame` : "your frame";
+    if (!out.image) {
+      const why = out.viewers ? `${out.viewers} browser${out.viewers === 1 ? " has" : "s have"} this board open but none drew ${part} within ${Math.round(SNAPSHOT_WAIT_MS / 1000)} s` : `no browser has this board open, so nothing could draw ${part}`;
+      return { frameId, image: false, viewers: out.viewers, note: `No snapshot: ${why}, and there is no earlier one. Use board_read for the outline; try again when ${who} has the board open.` };
+    }
+    const img = out.image;
+    const ageSeconds = Math.max(0, Math.round((Date.now() - img.at) / 1000));
+    const age = ageSeconds < 90 ? `${ageSeconds} s` : ageSeconds < 5400 ? `${Math.round(ageSeconds / 60)} min` : `${Math.round(ageSeconds / 3600)} h`;
+    const what = `${img.width}x${img.height} px, ${img.dark ? "dark" : "light"} theme`;
+    const note = out.fresh
+      ? `Snapshot of ${part} as ${who}'s browser draws it now (${what}).`
+      : `Not current: ${out.viewers ? "no browser answered in time" : "no browser has this board open"}, so this is the last snapshot of ${part}, taken ${age} ago (${what}). The frame may have changed since; board_read has its current contents.`;
+    return { frameId, image: true, fresh: out.fresh, ageSeconds, viewers: out.viewers, width: img.width, height: img.height, theme: img.dark ? "dark" : "light", area, note, data: img.data.toString("base64"), mimeType: img.mimeType };
   }
 
   write(room: BoardRoom, frameId: string, body: { shapes?: ShapeSpec[]; summary?: unknown }) {
@@ -503,7 +556,12 @@ export class AgentApi {
     const s = inScope(room, frameId, body.id);
     if (s.type === "frame" && s.meta?.paseo?.agentId) throw new ScopeError(`${s.id} is a bound frame owned by another agent`);
     const parent = resolveParent(room, frameId, s.parentId === frameId ? undefined : s.parentId);
-    const patch = body.patch as { text?: string; color?: string; x?: number; y?: number; w?: number; h?: number; portal?: unknown };
+    const patch = body.patch as { text?: string; color?: string; x?: number; y?: number; w?: number; h?: number; portal?: unknown; items?: unknown; title?: unknown };
+    // A checklist's content is its title and items, not text. A text patch used to change
+    // nothing and still answer ok, so an agent could not tick its plan and was not told.
+    if (s.type === CHECKLIST_TYPE && patch.text !== undefined)
+      throw new InputError(`update ${s.id}: a checklist has no text. Tick or change items with patch.items, e.g. {items:[{id:'…',checked:true}]} (item ids are in board_read; text rewords one, a new id with text adds one, remove:true drops one), and rename it with patch.title`);
+    if (s.type !== CHECKLIST_TYPE && (patch.items !== undefined || patch.title !== undefined)) throw new InputError(`update ${s.id}: only a checklist has items and a title`);
     if (patch.portal !== undefined && s.type !== "note") throw new InputError(`update ${s.id}: only stickies carry a portal`);
     if (patch.x !== undefined || patch.y !== undefined || patch.w !== undefined || patch.h !== undefined) this.layoutLocked(room, "moving or resizing a shape");
     const next: Rec = { ...s, props: { ...s.props } };
@@ -512,6 +570,12 @@ export class AgentApi {
     if (patch.portal !== undefined) {
       const { portal: _old, ...rest } = (s.meta ?? {}) as Record<string, unknown>;
       next.meta = patch.portal === null || patch.portal === false ? rest : { ...rest, portal: checkPortal(room, patch.portal, `update ${s.id}`, s.id) };
+    }
+    if (s.type === CHECKLIST_TYPE && (patch.items !== undefined || patch.title !== undefined)) {
+      try {
+        if (patch.title !== undefined && typeof patch.title !== "string") throw new Error("title must be a string");
+        next.props = checklistProps({ ...s.props, ...(patch.title !== undefined ? { title: patch.title as string } : {}), ...(patch.items !== undefined ? { items: patchChecklistItems(s.props.items, patch.items) } : {}) });
+      } catch (error) { throw new InputError(`update ${s.id}: ${(error as Error).message}`); }
     }
     if (patch.text !== undefined) {
       if (s.type === "frame") next.props.name = patch.text;

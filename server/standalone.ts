@@ -24,7 +24,7 @@ import { migrateLegacyEnv } from "./bunny-env";
 import { createServer } from "node:http";
 import path from "node:path";
 import { createPaseoClient, type PaseoClient } from "@getpaseo/client";
-import { statusOf } from "./paseo-bridge";
+import { agentBusy, statusOf } from "./paseo-bridge";
 
 const env = process.env;
 migrateLegacyEnv(env);
@@ -108,7 +108,7 @@ function observe(agent: any, announce: boolean) {
   if (!agent?.id) return;
   const status = statusOf(agent);
   const now: Seen = {
-    inTurn: agent.status === "running" || !!agent.activeTurn,
+    inTurn: agentBusy(agent),
     permission: status === "needs-permission",
     archived: status === "archived",
     agent,

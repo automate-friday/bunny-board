@@ -15,6 +15,11 @@ The sequence follows [n8n's Compose update model](https://github.com/n8n-io/n8n/
 (keep state plus secrets/configuration; stop writers before copying; restore, then start).
 The state and image steps below are specific to Bunny.
 
+A disposable Ubuntu 24.04 VPS drill verified all six fresh volumes, configuration,
+matching source and running images, workspace file and attachment, conversation
+history and a new browser-visible Codex reply without reauthentication. The original
+installation stayed stopped. Off-host encrypted backup remains untested.
+
 ## What must travel together
 
 The actual keys in `docker-compose.yml` are:
@@ -298,6 +303,13 @@ send one small operator-authorized continuation request in the same frame. Recor
 provider reauthentication as an intervention; do not call dummy-state restoration a
 successful live-provider recovery. Keep the original installation stopped throughout.
 
+Use GNU tar from the saved runtime image for extraction. The tested Alpine helper's
+tar restored three temporary provider symlinks with root ownership instead of their
+saved owner. GNU tar with numeric ownership preserved the complete metadata in the
+drill. Keep the helper root user and entrypoint override below; do not invoke the
+runtime entrypoint while extracting. Compare restored contents, ownership, modes and
+symlink targets with the snapshot before starting services.
+
 The following checks prevent accidentally selecting existing volumes; do not continue if
 the project already exists or any target volume is found. `create` makes containers and
 initializes their fresh volumes without starting the services.
@@ -319,7 +331,7 @@ for volume in board-state agent-auth workspaces paseo-home caddy-data caddy-conf
   docker run --rm --user 0 \
     --mount "type=volume,src=$volume_name,dst=/state" \
     --mount "type=bind,src=$backup,dst=/backup,readonly" \
-    alpine:3.22 tar xzpf "/backup/$volume.tar.gz" -C /state
+    --entrypoint tar "$RUNTIME_IMAGE" --numeric-owner -xzpf "/backup/$volume.tar.gz" -C /state
 done
 docker compose -p "$restore_project" up -d --no-build --pull never
 ```

@@ -65,6 +65,9 @@ export const BUNNY_CONTROLS_CSS = `
 .bunny-fp button:disabled { opacity: .5; cursor: default; }
 .bunny-fp button:focus-visible, .bunny-fp select:focus-visible, .bunny-fp textarea:focus-visible, .bunny-fp summary:focus-visible { outline: 2px solid ${B.violet}; outline-offset: 2px; }
 .bunny-fp button.bfp-primary:hover:not(:disabled) { background: ${B.violetDeep}; border-color: ${B.violetDeep}; }
+/* Keyboard shortcut hint after a button's label (Start ⌘↵); generated content, so the label stays the button's text. */
+.bunny-fp button[data-kbd]::after { content: attr(data-kbd); margin-left: 8px; font-size: 11px; font-weight: 500; opacity: .9; }
+@media (hover: none), (pointer: coarse) { .bunny-fp button[data-kbd]::after { content: none; } }
 .bunny-fp button.bfp-icon:hover:not(:disabled), .bunny-fp button.bfp-item:hover:not(:disabled) { background: ${B.hover}; border-color: transparent; }
 .bunny-fp button.bfp-item.bfp-on { background: ${B.lavenderSoft}; }
 .bunny-fp button.bfp-danger { color: ${B.danger}; }

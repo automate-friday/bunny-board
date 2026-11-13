@@ -78,10 +78,10 @@ export function providerSteers(provider: string | null | undefined): boolean {
   return (STEERING_PROVIDERS as readonly string[]).includes(id);
 }
 
-export function sendCapabilities(input: { host: string | null; provider?: string | null; durableReceipts?: boolean | null }): SendCapabilities {
+export function sendCapabilities(input: { host: string | null; provider?: string | null; durableReceipts?: boolean | null; background?: boolean }): SendCapabilities {
   const provider = input.provider ? String(input.provider).split("/")[0] : null;
   if (input.host) return { backend: "af-network", provider, midTurn: "wait-for-polled-idle", confirmation: "host-ack", dedupe: "trace-journal", ambiguousRetry: "never", residualRisk: MODE_NOTES["wait-for-polled-idle"] };
-  const midTurn: MidTurn = providerSteers(provider) ? "steer" : "wait-for-turn-end";
+  const midTurn: MidTurn = !input.background && providerSteers(provider) ? "steer" : "wait-for-turn-end";
   return {
     backend: "local-paseo",
     provider,

@@ -56,7 +56,10 @@ export function scrollToRow(list: HTMLElement | null, at: string): boolean {
   if (!holder) return false;
   // Holders may be display:contents; scroll and light up the first child with a box.
   const el = holder.getClientRects().length ? holder : ((holder.firstElementChild as HTMLElement | null) ?? holder);
-  el.scrollIntoView({ block: "center", behavior: "smooth" });
+  const box = el.getBoundingClientRect();
+  const viewport = list!.getBoundingClientRect();
+  // Scroll this conversation only. scrollIntoView also moves enclosing portal panes.
+  list!.scrollTo({ top: list!.scrollTop + box.top - viewport.top - (list!.clientHeight - box.height) / 2, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   el.setAttribute("data-flash", "");
   el.animate?.([{ boxShadow: "0 0 0 3px rgba(250,204,21,.9)", background: "light-dark(rgba(254,243,199,.9), color-mix(in srgb, hsl(48 45% 21%) 90%, transparent))" }, { boxShadow: "0 0 0 3px rgba(250,204,21,0)", background: "light-dark(rgba(254,243,199,0), color-mix(in srgb, hsl(48 45% 21%) 0%, transparent))" }], { duration: 1500, easing: "ease-out" });
   setTimeout(() => el.removeAttribute("data-flash"), 1500);

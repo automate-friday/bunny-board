@@ -1,4 +1,4 @@
-import { memo, useState, type ReactNode } from "react";
+import { createContext, memo, useContext, useState, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./messageBody.css";
@@ -34,10 +34,20 @@ export const MarkdownMessage = memo(function MarkdownMessage({ text }: { text: s
     {text.length > 32000 ? <p>Formatted preview limited to 32,000 characters. Raw text retains the whole message.</p> : null}
   </div>;
 });
-export function MessageBody({ text, compact = false }: { text: string; compact?: boolean }) {
-  const [raw, setRaw] = useState(false);
+// Raw text for an agent's reply in the conversation sidebar: the response's footer holds the
+// toggle (ResponseFooter.tsx) and provides it here; null where no footer does (cards, previews),
+// which keep the hover link on the message itself.
+export const ResponseRawCtx = createContext<boolean | null>(null);
+export function useResponseRaw(): boolean | undefined {
+  return useContext(ResponseRawCtx) ?? undefined;
+}
+
+// `raw`: shown raw or formatted by whoever holds the toggle; left out, the message has its own link.
+export function MessageBody({ text, compact = false, raw: rawProp }: { text: string; compact?: boolean; raw?: boolean }) {
+  const [rawOwn, setRaw] = useState(false);
+  const raw = rawProp ?? rawOwn;
   return <div className="message-body" data-testid="message-body" style={{ whiteSpace: "normal", ...(compact ? { maxHeight: 140, overflowY: "auto" } as const : {}) }}>
-    <button className="message-source" type="button" aria-pressed={raw} onPointerDown={e => e.stopPropagation()} onClick={() => setRaw(v => !v)}>{raw ? "Formatted" : "Raw text"}</button>
+    {rawProp === undefined ? <button className="message-source" type="button" aria-pressed={raw} onPointerDown={e => e.stopPropagation()} onClick={() => setRaw(v => !v)}>{raw ? "Formatted" : "Raw text"}</button> : null}
     {raw ? <pre data-testid="message-raw" className="message-raw">{text}</pre> : <MarkdownMessage text={text} />}
   </div>;
 }

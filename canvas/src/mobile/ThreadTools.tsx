@@ -3,7 +3,9 @@
 //   Esc or tapping away cancels);
 // - ⋯ → Edit agent settings: Name with the model, effort, access and mode controls;
 // - + New in the top bar, and long-press a message → Start agent about this: the start sheet for a
-//   new frame beside this one, prefilled like this agent (mobile/StartSheet.tsx askStartBeside).
+//   new frame beside this one, prefilled like this agent (mobile/StartSheet.tsx askStartBeside);
+// - long-press a message → Fork from here: a new frame and agent from the conversation up to
+//   that message (ForkFromHere.tsx).
 // A rename writes the frame's name; the board server carries it to the agent's Paseo title
 // (server/frame-names.ts), as on desktop.
 
@@ -158,11 +160,12 @@ export async function startBeside(opts: { frameId: string; agentId?: string; bin
   askStartBeside(opts.frameId, { provider: like.provider, host: like.host, worker: like.worker, cloudProvider: like.cloudProvider, ...(opts.quote ? { prompt: aboutMessage(opts.quote, { name: opts.frameName, url }) } : {}) });
 }
 
-// Long-press on a message: what to do with it.
-export function MessageMenu({ at, text, startAbout, close }: { at: { x: number; y: number }; text: string; startAbout: () => void; close: () => void }) {
+// Long-press on a message: what to do with it. `fork`: "Fork from here" (a new frame and
+// agent from the conversation up to this message, ForkFromHere.tsx), where it can be forked.
+export function MessageMenu({ at, text, startAbout, fork, close }: { at: { x: number; y: number }; text: string; startAbout: () => void; fork?: () => void; close: () => void }) {
   useModalHold();
   const [copied, setCopied] = useState(false);
-  const top = Math.min(at.y + 8, window.innerHeight - 140);
+  const top = Math.min(at.y + 8, window.innerHeight - (fork ? 188 : 140));
   return createPortal(
     <div className="bm-msg-layer" data-mobile-ui>
       <div className="bm-msg-scrim" onPointerDown={close} />
@@ -170,6 +173,11 @@ export function MessageMenu({ at, text, startAbout, close }: { at: { x: number; 
         <button type="button" role="menuitem" data-testid="message-start-agent" onClick={() => { close(); startAbout(); }}>
           + Start agent about this
         </button>
+        {fork ? (
+          <button type="button" role="menuitem" data-testid="message-fork-here" onClick={() => { close(); fork(); }}>
+            Fork from here
+          </button>
+        ) : null}
         <button type="button" role="menuitem" data-testid="message-copy" onClick={() => { void navigator.clipboard?.writeText(text).then(() => setCopied(true), () => undefined); setTimeout(close, 600); }}>
           {copied ? "Copied" : "Copy text"}
         </button>

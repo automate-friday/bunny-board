@@ -193,6 +193,41 @@ export function itemKey(entry: any): string {
   return `seq:${entry?.seqStart ?? "?"}`;
 }
 
+// Paseo's Claude assembler gives each text chunk streamed outside a turn its own
+// "synthetic-message-N" id (Paseo's projection never joins different ids), then sends
+// the whole reply again under the real message id. Join those chunks into one row and
+// fold the repeated reply into it. The Upstash adapter stamps real ids on new streams;
+// this repairs timelines already recorded that way and other Claude hosts.
+export const isSyntheticMessageId = (id: unknown): boolean => typeof id === "string" && /^synthetic-message-\d+$/.test(id);
+export interface StreamEntry {
+  seqStart: number;
+  seqEnd: number;
+  turnId?: string;
+  timestamp?: string;
+  // biome-ignore lint/suspicious/noExplicitAny: timeline items are wide unions.
+  item: any;
+}
+// The text of `prev` once `next` joins it, or null when `next` starts its own row.
+export function joinSyntheticText(prev: StreamEntry, next: StreamEntry): string | null {
+  const a = prev.item, b = next.item;
+  if (a?.type !== "assistant_message" || b?.type !== "assistant_message" || !isSyntheticMessageId(a.messageId)) return null;
+  if (prev.seqEnd + 1 !== next.seqStart || (prev.turnId || undefined) !== (next.turnId || undefined)) return null;
+  const before = String(a.text ?? ""), text = String(b.text ?? "");
+  if (isSyntheticMessageId(b.messageId)) return before + text;
+  // The real message repeats the streamed text; a different message stays separate.
+  return text.startsWith(before) ? text : null;
+}
+export function mergeSyntheticChunks<E extends StreamEntry>(entries: readonly E[]): E[] {
+  const out: E[] = [];
+  for (const entry of entries) {
+    const prev = out.at(-1);
+    const text = prev ? joinSyntheticText(prev, entry) : null;
+    if (prev && text !== null) out[out.length - 1] = { ...prev, seqEnd: entry.seqEnd, timestamp: entry.timestamp ?? prev.timestamp, item: { ...prev.item, text } };
+    else out.push(entry);
+  }
+  return out;
+}
+
 // The bounded, redacted TranscriptItem behind a row (shared/components/transcript.ts).
 // biome-ignore lint/suspicious/noExplicitAny: timeline entries are wide unions.
 export function projectItem(entry: any, agentId: string, bounds: Partial<ItemBounds> = {}): TranscriptItem | null {

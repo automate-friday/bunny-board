@@ -1,4 +1,3 @@
-import {WorkerSettings} from './WorkerSettings';
 import { ThemePicker } from "./theme";
 import {useEffect, useRef, useState} from 'react';
 import {type Editor, useValue} from 'tldraw';
@@ -52,7 +51,6 @@ export function BoardMenu({editor,boardId,onImport,toast}:{editor:Editor;boardId
       <div style={{marginTop:10}}><BoardControls editor={editor} boardId={boardId} onImport={()=>{setOpen(false);onImport();}} toast={toast} big /></div>
       <div style={{marginTop:8}}><ArchiveMenuItem editor={editor} onOpen={()=>setOpen(false)} /></div>
       <ThemePicker />
-      <WorkerSettings visible={open} />
       <div style={section}>Boards</div>
       <button type="button" data-testid="board-switcher" aria-expanded={boardsOpen} onClick={()=>setBoardsOpen(v=>!v)} style={{width:'100%',display:'flex',justifyContent:'space-between',padding:'7px 10px',border:'1px solid light-dark(#ddd, var(--bunny-line))',borderRadius:8,background:'light-dark(#fafafa, var(--bunny-surface))',font:'inherit',cursor:'pointer'}}>
         <span>Switch board…</span><span style={{color:'light-dark(#888, var(--bunny-muted))'}}>{boardsOpen?'▴':'▾'}</span>

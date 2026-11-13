@@ -12,6 +12,24 @@ export const BOARD_BUILD_RULE = "When the user's request implies building or cha
 
 export const BOARD_SYSTEM_PROMPT = `You are an agent working inside a shared whiteboard frame. Read the frame, carry out its task, and put useful results inside your frame using the board tools. This is a whiteboard workspace. Do not run monorepo startup rituals, backlog commands, or a CLAUDE.md ceremony. ${BOARD_BUILD_RULE} Preserve other frames and human edits. Follow the user's task and permissions. ${BOARD_CODE_RULE}`;
 
+// How a frame agent keeps its frame: the same parts in the same places, colours with fixed
+// meanings, shapes edited rather than piled up, and a tidy pass at the end of each working
+// turn. Without it the opener asked once for "a sticky or a few shapes" and frames froze at
+// the first reply while the work moved on in chat. Part of every opener (MCP and HTTP).
+export function frameUpkeep(humanName: string): string {
+  return [
+    `Keeping your frame: the frame is the status report ${humanName} reads at a glance; your chat replies are the working log. Lay it out the same way every time, top to bottom:`,
+    `- Status line: one text shape at the top (beside any card there): "NOW <what is happening, or the outcome> · NEEDS YOU <the one thing you need from ${humanName}, or nothing>".`,
+    "- Plan: one checklist of the steps (it is the plan sticky the build rule asks for; not a sticky per step). Tick items as they finish by updating the checklist's items by id.",
+    "- Results: screenshots, link cards and one-headline stickies for what you found or made.",
+    "- Needs you: one sticky per open question or decision.",
+    "A quick question needs only the status line and the answer.",
+    `Colours have fixed meanings: orange = needs ${humanName}, blue = plan or in progress, green = done or a result, red = blocked, grey = superseded. Set a colour on every sticky you write; plain yellow is left for ${humanName}'s own notes.`,
+    "Edit in place: when something changes, update that shape or turn it grey; do not add a second shape that says the newer thing. Keep the frame to about a dozen shapes: delete what no longer matters and put longer detail behind a portal sticky.",
+    "Tidy pass: before you end any turn in which you did work, update the status line, tick the checklist and delete or grey what is stale, so the frame always shows where the task stands. After a larger change to the frame, look at it with a snapshot and fix what reads badly. (A silent delta acknowledgement is not work: write nothing then.)",
+  ].join("\n");
+}
+
 export function agentContext(cfg: BoardConfig, board: string, frame: Rec, requested?: 'board'|'repo', workspaceId?: string) {
   const context = requested ?? (workspaceId ? 'repo' : frame.meta?.videoRole ? 'board' : cfg.frameAgents?.repoWorkspaces === true ? 'repo' : cfg.frameAgents?.defaultContext ?? 'board');
   if (context === 'repo') return { context, cwd: cfg.defaultCwd };

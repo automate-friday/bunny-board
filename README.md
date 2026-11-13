@@ -10,6 +10,13 @@ boards, operator tools, and historical notes.
 development. A working localhost canvas does not prove production licensing.
 The exact source commit and file hashes are recorded in `RELEASE.json`.
 
+**Developer preview.** A fresh Ubuntu 24.04 VPS trial used a vanilla coding agent given
+only the public repository URL to install Bunny. It verified normal Codex login, a
+browser task and correction, a workspace file and attachment, restart continuation, and
+full recovery into fresh volumes with a new visible reply without reauthentication.
+Licensed public HTTPS, production tldraw entitlement and off-host encrypted backup
+remain untested.
+
 ## Licence
 
 Bunny's code is source-available under the [Business Source License 1.1](LICENSE.md).

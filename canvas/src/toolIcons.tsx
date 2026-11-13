@@ -2,7 +2,7 @@ import type { ToolCallIcon } from "./paseo/tool-call-icon-name";
 
 // Small stroke icons for tool calls and timeline rows, drawn for the board (no icon
 // package). 14 px, currentColor.
-export type GlyphName = ToolCallIcon | "x" | "chevron" | "info" | "alert" | "scissors" | "list" | "image";
+export type GlyphName = ToolCallIcon | "x" | "chevron" | "info" | "alert" | "scissors" | "list" | "image" | "fork" | "copy" | "check";
 
 const PATHS: Record<GlyphName, React.ReactNode> = {
   wrench: <path d="M10.5 2.5a3 3 0 0 0-3.3 4L2.5 11.2l2.3 2.3 4.7-4.7a3 3 0 0 0 4-3.3l-1.8 1.8-1.7-.5-.5-1.7z" />,
@@ -72,6 +72,23 @@ const PATHS: Record<GlyphName, React.ReactNode> = {
       <rect x="2" y="2.5" width="12" height="11" rx="2" />
       <circle cx="6" cy="6.5" r="1.2" />
       <path d="M14 10.5l-3.5-3.5L3 13.5" />
+    </>
+  ),
+  // Two sheets: "Copy response" / "Copy message" (ResponseFooter.tsx), and the tick once copied.
+  copy: (
+    <>
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+      <path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" />
+    </>
+  ),
+  check: <path d="M3 8.5l3 3 7-7" />,
+  // One line splitting into two: "Fork from here" (ForkFromHere.tsx).
+  fork: (
+    <>
+      <circle cx="4.5" cy="3.5" r="1.6" />
+      <circle cx="11.5" cy="3.5" r="1.6" />
+      <circle cx="8" cy="12.5" r="1.6" />
+      <path d="M4.5 5.1v1.4a2 2 0 0 0 2 2h3a2 2 0 0 0 2-2V5.1M8 8.5v2.4" />
     </>
   ),
 };

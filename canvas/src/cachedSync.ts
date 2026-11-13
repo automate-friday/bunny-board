@@ -8,6 +8,7 @@
 // Without a copy (or with ?boardcache=0) it behaves as useSync. Keep in step with useSync on
 // tldraw upgrades.
 
+import { onBoardMessage } from "./frameSnapshot";
 import { atom, transact } from "@tldraw/state";
 import * as sync from "@tldraw/sync";
 import { TLRemoteSyncError, TLSyncClient, TLSyncErrorCloseEventReason, type RemoteTLStoreWithStatus, type TLPersistentClientSocket } from "@tldraw/sync";
@@ -76,7 +77,7 @@ export function useCachedSync({ uri, assets, shapeUtils, boardId }: { uri: strin
   registerFontsFromThemes(resolvedThemes);
   const schema = useTLSchemaFromUtils({ shapeUtils });
   const getUserPresence = getDefaultUserPresence;
-  const onCustomMessageReceived = undefined;
+  const onCustomMessageReceived = onBoardMessage;
 
   useEffect(() => {
     const storeId = uniqueId();

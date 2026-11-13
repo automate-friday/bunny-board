@@ -30,6 +30,9 @@ export interface FramePaseoMeta {
   agentId?: string;
   workspaceId?: string;
   status?: FrameStatus;
+  // Server-owned, beside status "error": the daemon says there is no such agent
+  // (shared/frame-lifecycle.ts). Absent on an errored frame = a failed turn.
+  activity?: "missing";
   // Provider subagents (Claude background Tasks) still running; display only.
   subagents?: number;
   // Cloud session cards in the frame still running (server/cloud-sessions.ts); display only.
@@ -54,13 +57,17 @@ export interface FramePaseoMeta {
   lastReceipt?: { delivery: string; at: number; traceId?: string; error?: string };
   // "Restart with board tools": the agent this frame was bound to before.
   previousAgentId?: string;
-  // Started by "Fork conversation to new frame" (frame-fork.ts): the frame and agent it branched from.
-  forkOf?: { frameId: string; agentId: string };
+  // Started by "Fork conversation to new frame" (frame-fork.ts): the frame and agent it branched
+  // from, and for "Fork from here" the time of the message it branched at.
+  forkOf?: { frameId: string; agentId: string; at?: string };
   // Set while a restart is creating the new agent: the binding to restore if the new
   // agent never appears (the server stopped mid-restart).
   restart?: { from: string; at: number; prev: Record<string, unknown> };
   // The last title the frame and its Paseo agent agreed on (frame-names.ts).
   syncedName?: string;
+  // The provisional title Bunny cut from the request when the frame had none (frame-names.ts);
+  // while the frame still shows it, the agent is asked to rename and a Paseo title wins.
+  autoName?: string;
   // Started with "Use cloud agent": a cloud builder does the coding (skills/cloud-dev).
   cloud?: boolean;
   // Which cloud builder; absent on frames bound before the choice existed (= Claude).

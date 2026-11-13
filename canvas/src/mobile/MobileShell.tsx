@@ -78,7 +78,9 @@ const localAgentMachine = () => (infoNow() as { agentMachine?: string | null } |
 // timeAgo, with a plain "Sep 12" for over a month ago: toLocaleDateString's first call loads the
 // locale data (~30 ms at 4x CPU throttle, in the tiles' first render).
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// Times before 2001 are placeholders (a binding written with no real time), not dates.
 function phoneAgo(at: number | undefined, now: number): string {
+  if (at !== undefined && at > 0 && at < 978_307_200_000) return "earlier";
   if (at === undefined || at <= 0 || now - at < 29.5 * 86_400_000) return timeAgo(at, now);
   const d = new Date(at);
   return `${MONTHS[d.getMonth()]} ${d.getDate()}${d.getFullYear() === new Date(now).getFullYear() ? "" : ` ${d.getFullYear()}`}`;
@@ -875,7 +877,7 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
           }}>
             + New
           </button>
-          <button type="button" className="bm-newagent bm-pinframe" data-testid="mobile-pin-frame" aria-pressed={pins.includes(current.id)} disabled={!pins.includes(current.id) && pins.length >= PIN_LIMIT} aria-label={pins.includes(current.id) ? `Unpin ${current.name}` : pins.length >= PIN_LIMIT ? `Pins are full (${PIN_LIMIT})` : `Pin ${current.name}`} onClick={() => togglePin(current.id)}>
+          <button type="button" className="bm-pinframe" data-testid="mobile-pin-frame" aria-pressed={pins.includes(current.id)} aria-label={pins.includes(current.id) ? `Unpin ${current.name}` : pins.length >= PIN_LIMIT ? `Pin ${current.name} (replaces your least used of ${PIN_LIMIT} pins)` : `Pin ${current.name}`} onClick={() => togglePin(current.id)}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill={pins.includes(current.id) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M9 4h6l-1 6 3 3H7l3-3-1-6zM12 13v7" />
             </svg>
@@ -914,7 +916,7 @@ export function MobileShell({ editor, boardId, userId, initialFrame, threadOpen,
       ) : null}
 
       {mode === "tiles" ? (
-        <TilesHome editor={editor} frames={pageTiles(frames, tilePage)} pins={pins} touched={touched} now={now} openFrame={openFrame} openSearch={() => setSearch(true)} toBoard={toBoard} startAgent={startAgent} openNew={() => setNewMenu(true)} />
+        <TilesHome editor={editor} frames={pageTiles(frames, tilePage)} allFrames={frames} pins={pins} touched={touched} now={now} openFrame={openFrame} openSearch={() => setSearch(true)} toBoard={toBoard} startAgent={startAgent} openNew={() => setNewMenu(true)} />
       ) : null}
 
       {mode === "frame" && frameId && !reveal ? <FrameSpotlight editor={editor} frameId={frameId} /> : null}
@@ -1026,8 +1028,8 @@ function BoardSwitcher({ boardId, close, children }: { boardId: string; close: (
   );
 }
 
-function TilesHome({ editor, frames, pins, touched, now, openFrame, openSearch, toBoard, startAgent, openNew }: { editor: Editor; frames: Frame[]; pins: string[]; touched: Map<string, number>; now: number; openFrame: (id: string, thread?: boolean) => void; openSearch: () => void; toBoard: () => void; startAgent: () => void; openNew: () => void }) {
-  const { pinned, pinnedFallback, recent, rest } = tileSections(frames, pins, touched);
+function TilesHome({ editor, frames, allFrames, pins, touched, now, openFrame, openSearch, toBoard, startAgent, openNew }: { editor: Editor; frames: Frame[]; allFrames: Frame[]; pins: string[]; touched: Map<string, number>; now: number; openFrame: (id: string, thread?: boolean) => void; openSearch: () => void; toBoard: () => void; startAgent: () => void; openNew: () => void }) {
+  const { pinned, pinnedFallback, recent, rest } = tileSections(frames, pins, touched, 10, 6, allFrames);
   const pull = useDragCommit(-1, 120, toBoard);
   // All frames: the first rows at once, the rest added in idle time, 12 at a time (a live
   // board has ~150 frames; laying them all out in the first frame cost ~1 s at 4x CPU
@@ -1058,11 +1060,20 @@ function TilesHome({ editor, frames, pins, touched, now, openFrame, openSearch, 
             <h3>
               Pinned{pinnedFallback ? <span className="bm-h3-note"> · none yet, showing latest</span> : null}
             </h3>
-            <div className="bm-grid" data-testid="mobile-pinned">
-              {pinned.map((f) => (
-                <Tile key={f.id} editor={editor} frame={f} touched={touched.get(f.id)} now={now} open={() => openFrame(f.id)} />
-              ))}
-            </div>
+            {pinnedFallback ? (
+              <div className="bm-grid" data-testid="mobile-pinned">
+                {pinned.map((f) => (
+                  <Tile key={f.id} editor={editor} frame={f} touched={touched.get(f.id)} now={now} open={() => openFrame(f.id)} />
+                ))}
+              </div>
+            ) : (
+              // Real pins as a compact list, so all of them fit above the fold.
+              <div className="bm-pinlist" data-testid="mobile-pinned">
+                {pinned.map((f) => (
+                  <PinRow key={f.id} frame={f} touched={touched.get(f.id)} now={now} open={() => openFrame(f.id)} />
+                ))}
+              </div>
+            )}
           </section>
         ) : null}
         {recent.length ? (
@@ -1149,6 +1160,22 @@ function Tile({ editor, frame, touched, now, open }: { editor: Editor; frame: Fr
               : "no interaction yet"
             : `${frame.rawStatus === "needs-permission" ? "needs you ·" : "last interaction"} ${phoneAgo(touched, now)}`}
       </small>
+    </button>
+  );
+}
+
+// A pinned frame on the phone's home: status dot, name, and your last message (or when you
+// last used it), one 56px row each.
+function PinRow({ frame, touched, now, open }: { frame: Frame; touched?: number; now: number; open: () => void }) {
+  const summary = useAgentSummary(frame.agentId, !!frame.agentId);
+  const last = summary?.lastUserMessage?.text;
+  return (
+    <button type="button" className="bm-pinrow" data-testid="mobile-pin-row" data-frame-id={frame.id} data-status={frame.rawStatus} onClick={open}>
+      <StatusDot status={frame.rawStatus} title={frame.status} />
+      <span className="bm-pinrow-text">
+        <span className="bm-pinrow-name">{frame.name}</span>
+        <small>{last ? `You: ${last}` : frame.rawStatus === "needs-permission" ? "needs you" : touched === undefined ? "no interaction yet" : phoneAgo(touched, now)}</small>
+      </span>
     </button>
   );
 }
@@ -1265,8 +1292,8 @@ function ResultRow({ editor, frame, hit, pinned, pinsFull, report, when, openFra
             Follow agent
           </button>
         ) : null}
-        <button type="button" data-testid="mobile-pin" aria-pressed={pinned} disabled={!pinned && pinsFull} title={!pinned && pinsFull ? `Pins are full (${PIN_LIMIT}): unpin one first` : undefined} onClick={() => togglePin(frame.id)}>
-          {pinned ? "Unpin" : pinsFull ? "Pins full" : "Pin"}
+        <button type="button" data-testid="mobile-pin" aria-pressed={pinned} title={!pinned && pinsFull ? `Replaces your least used of ${PIN_LIMIT} pins` : undefined} onClick={() => togglePin(frame.id)}>
+          {pinned ? "Unpin" : "Pin"}
         </button>
         {report ? (
           <a href={report} target="_blank" rel="noopener noreferrer" data-testid="mobile-report">

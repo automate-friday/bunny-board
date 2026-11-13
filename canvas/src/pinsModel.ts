@@ -1,6 +1,6 @@
 // The pin rules (pins.ts has the hooks): a few hand-picked frames per board, kept in the
 // board's tldraw document record so every device sees the same ones.
-export const PIN_LIMIT = 4;
+export const PIN_LIMIT = 8;
 export const PINS_DOC = "document:document";
 
 function cleanPins(v: unknown): string[] | null {
@@ -19,23 +19,44 @@ export function withPins<T extends { meta?: object }>(doc: T, pins: readonly str
   return { ...doc, meta: { ...doc.meta, bunnyPins: cleanPins(pins) ?? [] } };
 }
 
-export type PinToggle = { pins: string[]; full: boolean };
-/** Pin or unpin `id`. Pinning when PIN_LIMIT are pinned changes nothing (`full`). */
-export function togglePin(pins: readonly string[], id: string): PinToggle {
-  if (pins.includes(id)) return { pins: pins.filter((p) => p !== id), full: false };
-  if (pins.length >= PIN_LIMIT) return { pins: [...pins], full: true };
-  return { pins: [...pins, id], full: false };
+/** The result of a pin change: the new pins, and the pin that made room (if any). */
+export type PinChange = { pins: string[]; evicted: string | null };
+
+/** The pin used least recently (by `lastUsed`, frame id → time), the earliest pinned on a
+ *  tie or when nothing is known: the one a full set gives up for a new pin. */
+export function leastUsedPin(pins: readonly string[], lastUsed: ReadonlyMap<string, number>): string | null {
+  let pick: string | null = null;
+  let at = Infinity;
+  for (const p of pins) {
+    const t = lastUsed.get(p) ?? -Infinity;
+    if (t < at) {
+      at = t;
+      pick = p;
+    }
+  }
+  return pick;
+}
+
+/** Pin or unpin `id`. Pinning when PIN_LIMIT are pinned unpins the least used pin to make
+ *  room (it is never refused). */
+export function togglePin(pins: readonly string[], id: string, lastUsed: ReadonlyMap<string, number> = new Map()): PinChange {
+  if (pins.includes(id)) return { pins: pins.filter((p) => p !== id), evicted: null };
+  return placePin(pins, id, null, lastUsed);
 }
 
 /** Pin `id` just before `before` (null: at the end), or move it there if already pinned.
- *  Pinning a new frame when PIN_LIMIT are pinned changes nothing (`full`). */
-export function placePin(pins: readonly string[], id: string, before: string | null): PinToggle {
-  if (before === id) return { pins: [...pins], full: false };
-  if (!pins.includes(id) && pins.length >= PIN_LIMIT) return { pins: [...pins], full: true };
-  const rest = pins.filter((p) => p !== id);
+ *  A new pin when PIN_LIMIT are pinned takes the place of the least used one (`evicted`). */
+export function placePin(pins: readonly string[], id: string, before: string | null, lastUsed: ReadonlyMap<string, number> = new Map()): PinChange {
+  if (before === id) return { pins: [...pins], evicted: null };
+  let rest = pins.filter((p) => p !== id);
+  let evicted: string | null = null;
+  if (!pins.includes(id) && rest.length >= PIN_LIMIT) {
+    evicted = leastUsedPin(rest.filter((p) => p !== before), lastUsed) ?? leastUsedPin(rest, lastUsed);
+    rest = rest.filter((p) => p !== evicted);
+  }
   const at = before ? rest.indexOf(before) : -1;
-  if (at < 0) return { pins: [...rest, id], full: false };
-  return { pins: [...rest.slice(0, at), id, ...rest.slice(at)], full: false };
+  if (at < 0) return { pins: [...rest, id], evicted };
+  return { pins: [...rest.slice(0, at), id, ...rest.slice(at)], evicted };
 }
 
 /** Pins that still point at a frame (a deleted frame's pin is hidden, not forgotten). */

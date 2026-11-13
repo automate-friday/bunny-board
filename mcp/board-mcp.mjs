@@ -244,7 +244,7 @@ const TOOLS = [
       near: {type:"string", description:"Shape id on this board; place nearby without overlap", maxLength:256}
     }, required:["board","name","opener","key"] }
   },
-  {name:'board_channel',description:'List explicit active arrow-channel memberships for this frame, or send one deliberate message with stable messageId. No automatic forwarding. Retrying a message returns the saved receipt, including unknown.',inputSchema:{type:'object',properties:{action:{type:'string',enum:['list','send']},channelId:{type:'string'},messageId:{type:'string'},text:{type:'string'}},required:['action']},op:'channel'},
+  {name:'board_channel',description:'List the channels connecting this frame to other frames (an arrow, or a pair of channel stickies), or send one message (stable messageId) to the other frame\'s agent. The person connected the frames so the agents coordinate: send without asking them, whenever it helps the work (what you are doing, results, questions, conflicts). Transcripts are never forwarded automatically; skip acknowledgement-only messages. Retrying a message returns the saved receipt, including unknown. open proposes a channel to another bound frame named by frame; it opens only after a person approves it on the board.',inputSchema:{type:'object',properties:{action:{type:'string',enum:['list','send','open']},channelId:{type:'string'},messageId:{type:'string'},text:{type:'string'},frame:{type:'string',description:'open: the other frame, by its exact name or shape: id'}},required:['action']},op:'channel'},
   {name:'board_video', description:'Video processing frame only: create its two child frames idempotently; prepare review URL; record feedback route receipts. Approval decisions belong to the user. No publishing or automatic sends.', inputSchema:{type:'object',properties:{action:{type:'string',enum:['read','children','review','route']},url:{type:'string'},route:{type:'object',properties:{id:{type:'string'},owner:{type:'string'},sourceClip:{type:'string'},acceptance:{type:'string'},receipt:{type:'string'}},required:['id','owner','sourceClip','acceptance','receipt']}},required:['action']},op:'video'},
   {
     name: "board_comment",
@@ -255,13 +255,17 @@ const TOOLS = [
   {
     name: "board_read",
     description:
-      "Read your frame on the whiteboard as a compact outline (default) or JSON. scope:'board' lists every frame on the board in one line each plus unframed shapes.",
+      "Read your frame on the whiteboard as a compact outline (default) or JSON. scope:'board' lists every frame on the board in one line each plus unframed shapes. With scope:'board', pageId selects one page and expands its shapes; omit pageId to discover page names/ids. query finds frames by name or agent title, optionally within that page. JSON supports offset/limit (default/max 300) and returns total, nextOffset (null at end), and truncated (more records follow). Follow nextOffset to read all records. Records sort by id; paging reads live state, so restart if the board changes.",
     inputSchema: {
       type: "object",
       properties: {
         scope: { type: "string", enum: ["frame", "board"] },
         format: { type: "string", enum: ["outline", "json"] },
-        ids: { type: "array", items: { type: "string" } },
+        ids: { type: "array", items: { type: "string", minLength: 1 }, description: "JSON only: exact record ids, not descendants; intersects pageId if supplied" },
+        pageId: { type: "string", minLength: 1, description: "scope:'board' only: existing page id; includes descendant shapes and bindings with both endpoints on the page" },
+        offset: { type: "integer", minimum: 0, maximum: 9007199254740991, description: "JSON only: starting record offset, default 0" },
+        limit: { type: "integer", minimum: 1, maximum: 300, description: "JSON only: maximum records to return, default 300" },
+        query: { type: "string", description: "scope:'board' only: words to find frames by name or agent title" },
       },
     },
     op: "read",
@@ -274,6 +278,13 @@ const TOOLS = [
     op: "read-image",
   },
   {
+    name: "board_snapshot",
+    description: "See YOUR frame as the person sees it: a picture drawn by a browser that has the board open (board_read gives only a text outline). Use it to check the layout after you change the frame: overlaps, crowding, text that runs long, colours, empty space. area {x,y,w,h} (frame-relative, as board_read prints positions) shows one part larger, for a frame too tall or wide to read whole. The text beside the picture says whether it is current: with no browser open on the board, or none answering in about 10 s, you get the last snapshot with its age, or a note that there is none.",
+    inputSchema: {type:"object",properties:{area:{type:"object",description:"Optional part of your frame to show, frame-relative",properties:{x:{type:"number"},y:{type:"number"},w:{type:"number"},h:{type:"number"}},required:["x","y","w","h"]}}},
+    annotations: {readOnlyHint:true},
+    op: "snapshot",
+  },
+  {
     name: "board_write",
     description:
       "Provide shapes (or summary only for a requested compression). Create shapes inside YOUR frame, including portal stickies: a note with portal:{id} (or a page area {x,y,w,h}) links content elsewhere, the way to add more than fits here. Coordinates are frame-relative. A sticky (note) is 200 px wide and holds about 12 words; longer text grows it about 30 px per line, so keep each one to a short headline. Place on the 240 px grid (x 20/260/500/…, y 50/290/530/…) or omit x/y to auto-place. The server rejects writes outside your frame and writes that would overlap another shape (the error names the next free slot), and clamps shapes that overhang the frame edge. type 'link' {board, frameId?, text} is a card that opens another board or frame. A note with portal {id} or page-space {x,y,w,h} links to another place on this board (the person jumps there and back, or expands it in place); board_read shows it as '⤳ portal → …'. Checklist uses title and items [{id,text,checked}] with unique nonempty IDs. Returns the new ids.",
@@ -282,14 +293,14 @@ const TOOLS = [
   },
   {
     name: "board_update",
-    description: "Change a shape inside your frame, or make a sticky a portal: patch.portal {id} links it to another shape or frame, or page-space {x,y,w,h} to an area (see board_write); portal:null removes it. Also text, colour, position (frame-relative) or size.",
+    description: "Change a shape inside your frame, or make a sticky a portal: patch.portal {id} links it to another shape or frame, or page-space {x,y,w,h} to an area (see board_write); portal:null removes it. Also text, colour, position (frame-relative) or size. A checklist is changed by item: patch.items [{id, checked?, text?, remove?}] ticks or unticks, rewords, adds (a new id with text) or removes items by id (ids are in board_read; items you do not list stay as they are), and patch.title renames it.",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string" },
         patch: {
           type: "object",
-          properties: { text: { type: "string" }, color: { type: "string" }, x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" }, portal: { anyOf: [portal, { type: "null" }] } },
+          properties: { text: { type: "string" }, color: { type: "string" }, x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" }, portal: { anyOf: [portal, { type: "null" }] }, title: { type: "string", description: "checklist only: its title" }, items: { type: "array", description: "checklist only: changes by item id", items: { type: "object", properties: { id: { type: "string" }, checked: { type: "boolean" }, text: { type: "string" }, remove: { type: "boolean" } }, required: ["id"] } } },
         },
       },
       required: ["id", "patch"],
@@ -438,6 +449,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (!tool || (!FRAME_SCOPED && tool.name !== "board_start_frame")) return { isError: true, content: [{ type: "text", text: `unknown tool ${req.params.name}` }] };
   try {
     const out = await call(tool.op, req.params.arguments ?? {});
+    if (tool.op === "snapshot") return {content:[{type:"text",text:out.note},...(out.data?[{type:"image",data:out.data,mimeType:out.mimeType}]:[])]};
     if (tool.op === "read-image") return {content:[{type:"text",text:JSON.stringify({id:out.id,name:out.name})},{type:"image",data:out.data,mimeType:out.mimeType}]};
     const text = typeof out.outline === "string" ? out.outline : JSON.stringify(out, null, 2);
     return { content: [{ type: "text", text }] };

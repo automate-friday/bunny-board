@@ -8,8 +8,8 @@ import type { PromptOutbox, PromptReceipt } from "./prompt-outbox";
 import { hostOperation } from "./daemon-health";
 import { pinTranscriptCard } from "./agent-api";
 import { BoardWorkspaces } from './board-workspaces';
-import { cleanName, isGenericName, nameFromRequest, reconcileNames } from "./frame-names";
-import { BOARD_SYSTEM_PROMPT, agentContext } from "./agent-context";
+import { cleanName, isGenericName, isProvisionalName, reconcileNames, startName } from "./frame-names";
+import { BOARD_SYSTEM_PROMPT, agentContext, frameUpkeep } from "./agent-context";
 import { missingAgent, retryableBindingError, withDaemonRead } from './daemon-health';
 // Watches every board for frame binding requests and human edits inside bound
 // frames. Fulfils requests through Paseo, keeps frame status/colour in sync with
@@ -47,6 +47,8 @@ import {
   shapeText,
 } from "./records";
 import { authorFor, type BoardHost, type BoardRoom, type ChangeSource, type RecordChange, type WriteOps } from "./room-host";
+import { SEEN, type LifecycleParity } from "./lifecycle-parity";
+import { colourOf, legacyStatusOf, type Lifecycle, type LifecycleEvent, type LifecycleMeta, lifecycleCode, lifecycleOf, storedActivityOf, transition } from "../shared/frame-lifecycle";
 import type { Receipt, RemoteAgents } from "./remote";
 import { burstDelay, type FrameHistory } from "./frame-history";
 import type { FrameArchive } from "./frame-archive";
@@ -63,6 +65,15 @@ const NAME_SYNC_MS = 1500;
 // Live frames steer deltas into a busy agent's turn, at most once per this interval
 // (cfg.busyDeltaMs), so steady editing cannot flood a long-running turn.
 const BUSY_DELTA_MS = 20_000;
+// A bound agent the daemon called missing, or never read, is re-read by reconcileStatuses: first on the
+// next pass, then with a doubling gap up to five minutes, so a board of deleted agents does
+// not cost a daemon read each every 15 s.
+const UNKNOWN_REREAD_MS = 15_000;
+const UNKNOWN_REREAD_MAX_MS = 300_000;
+
+// The lifecycle state a frame's stored fields say it is in (shared/frame-lifecycle.ts reads
+// them structurally, so the server's own meta type is passed as is).
+const stateOf = (p: FramePaseoMeta | undefined): Lifecycle => lifecycleOf(p as LifecycleMeta | undefined);
 
 export const BOARD_TOOLS = ["board_read", "board_write", "board_update", "board_delete", "board_frame", "board_layout", "board_add_artifact", "board_pin_transcript", "board_widget", "board_stamp", "board_video", "board_channel", "board_archive_candidates", "board_archive"];
 
@@ -94,6 +105,10 @@ interface Binding {
   status: FrameStatus;
   // Provider subagents still running (display only: status stays the agent's own).
   subagents: number;
+  // An agent the daemon called missing (or never read) is re-read by reconcileStatuses with a growing gap:
+  // how many times it was still missing, and when to ask next.
+  unknownReads?: number;
+  unknownReadAt?: number;
   touched: Map<string, Touch>;
   pendingText: Map<string, Touch>;
   textQuietAt: number;
@@ -137,7 +152,7 @@ function httpError(status: number, message: string): Error {
 }
 
 // Binding fields only the server may change. Human edits to them are reverted.
-const SERVER_OWNED = ["agentId", "workspaceId", "boundAt", "linked", "queue", "pendingDeltas", "lastDeltaAt", "error", "introducedAt", "introPending", "previousAgentId", "forkOf", "restart", "host", "lastReceipt", "workspaceSetup", "bindRetry", "pendingText", "deltaDelivery", "relink", "cloud", "cloudProvider", "compressionOffer", "compression", "remoteStart"] as const;
+const SERVER_OWNED = ["agentId", "activity", "workspaceId", "boundAt", "linked", "queue", "pendingDeltas", "lastDeltaAt", "error", "introducedAt", "introPending", "previousAgentId", "forkOf", "restart", "host", "lastReceipt", "workspaceSetup", "bindRetry", "pendingText", "deltaDelivery", "relink", "cloud", "cloudProvider", "compressionOffer", "compression", "remoteStart"] as const;
 
 // A shape a person creates while the layout is locked may still be shaped by the tool
 // that is creating it (a box dragged out, a stroke, an arrow) for this long.
@@ -218,6 +233,8 @@ export class FrameWatcher {
   // Plugin widget data sources (server/widgets): board_read shows each widget's status.
   widgets: WidgetHub | null = null;
   promptOutbox: PromptOutbox | null = null;
+  // Shadow parity check of the lifecycle machine against these writers (lifecycle-parity.ts).
+  parity: LifecycleParity | null = null;
   promptReceiptChanged(receipt: PromptReceipt): void {
     if(receipt.kind==='stamp'){this.stampReceipt(receipt);return;}
     const b=this.bindingFor(receipt.boardId,receipt.frameId);
@@ -239,7 +256,7 @@ export class FrameWatcher {
       // already ended (its hook beat the timeline confirmation), the agent is idle now.
       const turnEnded=b.sentAtTurn!==null&&b.turnEnds!==b.sentAtTurn;
       b.sentAtTurn=null;
-      if(!turnEnded)this.applyStatus(b,'running');
+      if(!turnEnded)this.promptSent(b);
     }
     // Edits that settled while this delta was in flight were held only by it: deliver them
     // now (flush re-checks busy, paused and mode) instead of waiting for an unrelated edit.
@@ -383,7 +400,10 @@ export class FrameWatcher {
     if (pending && snap) this.finishRestart(room, b.frameId, pending.from, b.agentId);
     const status = statusOf(snap?.agent);
     this.log(`resume ${room.id}/${b.frameId} → agent ${b.agentId} (${status})`);
-    this.applyStatus(b, status);
+    // The stranded restart (its old agent is bound elsewhere) is still left in error by the
+    // old writer; the machine takes it over with the restart writers.
+    if (pending && snap === null) this.applyStatusLegacy(b, status);
+    else this.agentStatus(b, status);
     if (b.introPending || b.queued.length || b.pendingText.size) void this.flush(b, false);
   }
 
@@ -454,14 +474,14 @@ export class FrameWatcher {
 
   cloudChanged(boardId: string, frameId: string): void {
     const b = this.bindings.get(key(boardId, frameId));
-    if (b) this.applyStatus(b, b.status);
+    if (b) this.dispatchStatus(b, null);
   }
 
   setSubagents(agentId: string, running: number): void {
     const b = this.byAgent.get(agentId);
     if (!b || b.subagents === running) return;
     b.subagents = running;
-    this.applyStatus(b, b.status);
+    this.dispatchStatus(b, null);
   }
 
   bindingFor(boardId: string, frameId: string): Binding | undefined {
@@ -495,7 +515,7 @@ export class FrameWatcher {
       .refresh()
       .catch(() => undefined);
     if (snap === undefined || this.bindingFor(boardId, frameId) !== b) return;
-    this.applyStatus(b, statusOf(snap?.agent));
+    this.agentStatus(b, statusOf(snap?.agent));
   }
 
   // Where an agent is bound, if anywhere (one frame per agent).
@@ -577,6 +597,9 @@ export class FrameWatcher {
   // --- document changes -------------------------------------------------------------
 
   onChanges(room: BoardRoom, source: ChangeSource, changes: RecordChange[]): void {
+    // Shadow only (server/lifecycle-parity.ts): every write to a frame record, from anyone,
+    // is compared with the lifecycle machine. It reads and counts; it cannot throw.
+    if (this.parity) for (const c of changes) if ((c.after ?? c.before)?.type === "frame") this.parity.observe({ boardId: room.id, frameId: c.id, before: c.before, after: c.after, reason: source.kind === "server" ? source.reason : source.kind });
     if (this.componentAgentsMemo && changes.some((c) => isComponent(c.after) || isComponent(c.before))) this.componentAgentsMemo = null;
     // Frame renames from anyone (the user, the agent's board_frame, the server) name the agent too.
     for (const c of changes) {
@@ -737,7 +760,7 @@ export class FrameWatcher {
     if (!isNew && !noteAdded) return;
     const frameId = owningBoundFrame(room.records, after);
     const b = frameId ? this.bindingFor(room.id, frameId) : undefined;
-    if (!b || b.status === "archived" || b.status === "requested") {
+    if (!b || b.status === "archived" || this.startingNow(b)) {
       if (isNew) this.log(`stamp ${p.kind} ${after.id} on ${room.id}: no agent bound to its frame; not sent`);
       return;
     }
@@ -1218,7 +1241,9 @@ export class FrameWatcher {
     const frame = room.records.get(frameId);
     if (!frame || frame.type !== "frame") throw httpError(404, `frame ${frameId} is not on board ${room.id}`);
     const p = frame.meta?.paseo as FramePaseoMeta | undefined;
-    if (p?.request || p?.status === "requested" || this.bindingFor(room.id, frameId)?.status === "requested")
+    const starting = this.bindingFor(room.id, frameId);
+    const stored = stateOf(p).s;
+    if (p?.request || stored === "starting" || stored === "restarting" || (starting && this.startingNow(starting)))
       throw httpError(409, "this frame is still starting its conversation; wait for it, then unbind");
     if (!p?.agentId) throw httpError(409, "this frame is not bound to a conversation");
     if (this.restarting.has(key(room.id, frameId)) || p.restart) throw httpError(409, "this frame is restarting its conversation; try again in a moment");
@@ -1457,7 +1482,7 @@ export class FrameWatcher {
     // Comments are messages to the agent, like the sidebar chat: each goes through the prompt
     // outbox on its own, so it never waits behind (or replaces) an unconfirmed delta receipt.
     // Pause agents holds them; a busy agent gets them during its turn, as chat does.
-    if (this.promptOutbox && !b.host && b.queued.some(isCommentDelta) && b.status !== "archived" && b.status !== "requested") {
+    if (this.promptOutbox && !b.host && b.queued.some(isCommentDelta) && b.status !== "archived" && !this.startingNow(b)) {
       if (!force && this.paused(b.boardId)) this.log(`comment held for ${b.agentId}: agents paused on board ${b.boardId}`);
       else this.sendComments(b);
     }
@@ -1500,7 +1525,7 @@ export class FrameWatcher {
     // on-demand frames, remote agents and permission prompts still hold them.
     const busy = b.status === "running";
     const steer = busy && deltasToo && this.modeOf(b) === "live" && !!this.promptOutbox && !b.host;
-    if (!force && (b.status === "needs-permission" || b.status === "requested" || (busy && !steer))) {
+    if (!force && (b.status === "needs-permission" || this.startingNow(b) || (busy && !steer))) {
       this.log(`delta held for ${b.agentId} (${b.status}); ${b.queued.length} queued`);
       return;
     }
@@ -1562,11 +1587,11 @@ export class FrameWatcher {
         const receipt = await this.sendRemote(b, body, wasIntro ? "Board introduction for an imported conversation" : "Board delta");
         this.record(b, body, `delivered-remote:${receipt.delivery}`);
         // Hold later deltas until a poll sees the agent idle again (as turn ends do here).
-        this.applyStatus(b, "running");
+        this.promptSent(b);
       } else {
         const api = await this.bridge.ready;
         if (text || wasIntro) await this.appendRow(b, `board-delta-${b.frameId}-${Date.now()}`, text || "Board introduction sent (what the board is, the frame, how to read and write it).");
-        this.applyStatus(b, "running");
+        this.promptSent(b);
         if(this.stopped||!this.current(b))return;
         await api.agents.ref(b.agentId).send(body,{messageId:delivery.operationId});
         this.record(b, body, "delivered");
@@ -1605,7 +1630,8 @@ export class FrameWatcher {
         this.writeFrameMeta(b, { pendingDeltas: b.queued.length, queue: b.queued, error: `af-network send failed: ${(e as Error).message}`.slice(0, 400) });
       } else {
         b.queued.unshift(...texts);
-        this.applyStatus(b, "error");
+        this.parity?.note(SEEN.sendFailureAsError);
+        this.applyStatusLegacy(b, "error");
       }
       delivery.status="unknown";b.held=true;
       this.writeFrameMeta(b,{deltaDelivery:delivery,error:"Board message delivery unconfirmed. Resolve its receipt before sending again.",queue:b.queued,pendingDeltas:b.queued.length+b.pendingText.size});
@@ -1684,11 +1710,13 @@ export class FrameWatcher {
     }
   }
 
-  // A sidebar reply to a bound agent on another machine.
-  async promptRemote(agentId: string, text: string): Promise<Receipt> {
+  // A message to a bound agent on another machine. purpose labels the network handoff
+  // (default: a sidebar reply); board-originated notices pass their own so the agent does
+  // not read them as something the person typed.
+  async promptRemote(agentId: string, text: string, purpose?: string): Promise<Receipt> {
     const b = this.byAgent.get(agentId);
     if (!b?.host) throw httpError(409, `agent ${agentId} is not a remote frame's agent`);
-    return this.sendRemote(b, text, `Reply from ${this.cfg.humanName} in the board sidebar`);
+    return this.sendRemote(b, text, purpose ?? `Reply from ${this.cfg.humanName} in the board sidebar`);
   }
 
   remoteHostOf(agentId: string): string | null {
@@ -1704,7 +1732,7 @@ export class FrameWatcher {
   onRemoteStatus(agentId: string, status: AgentStatus | FrameStatus): void {
     const b = this.byAgent.get(agentId);
     if (!b?.host) return;
-    this.applyStatus(b, status);
+    this.agentStatus(b, status);
     if (status === "idle" && (b.queued.length || b.pendingText.size || b.introPending)) void this.flush(b, false);
   }
 
@@ -1776,7 +1804,7 @@ export class FrameWatcher {
     const room = this.host.get(b.boardId);
     const frame = room.records.get(b.frameId);
     if (!frame) return;
-    const act = reconcileNames(frame.props.name, paseoTitle, frame.meta?.paseo?.syncedName);
+    const act = reconcileNames(frame.props.name, paseoTitle, frame.meta?.paseo?.syncedName, frame.meta?.paseo?.autoName);
     if (act.kind === "none") return;
     if (act.kind === "toPaseo") {
       if (!this.bridge.aux) return; // retried on the next rename or hook event
@@ -1815,10 +1843,36 @@ export class FrameWatcher {
     this.reconciling = true;
     try {
       for (const b of [...this.bindings.values()]) {
-        if (b.host || (b.status !== "running" && b.status !== "needs-permission") || !this.current(b)) continue;
+        if (b.host || !this.current(b)) continue;
+        // An agent the daemon called missing (or that was never read) is asked about again,
+        // less and less often: it may be back, or it may be gone for good. A failed turn is
+        // not re-read: it stays red until the next turn, as before.
+        const unknown = b.status === "error" || b.status === "requested" ? this.unreadActivity(b) : null;
+        if (unknown) {
+          if (Date.now() < (b.unknownReadAt ?? 0)) continue;
+        } else if (b.status !== "running" && b.status !== "needs-permission") continue;
         const snap = await withDaemonRead(() => aux.fetchAgent(b.agentId)).catch(() => undefined);
         if (snap === undefined || this.stopped || !this.current(b)) continue;
+        // The dropped hook also carried the agent's title: a Paseo rename still reaches the frame.
+        const title = (snap?.agent as { title?: string | null } | undefined)?.title;
+        if (title && title !== this.paseoTitles.get(b.agentId)) this.onAgentTitle(b.agentId, title);
         const status = statusOf(snap?.agent);
+        if (unknown) {
+          if (status === "missing") {
+            b.unknownReads = (b.unknownReads ?? 0) + 1;
+            b.unknownReadAt = Date.now() + Math.min(UNKNOWN_REREAD_MAX_MS, UNKNOWN_REREAD_MS * 2 ** Math.min(b.unknownReads - 1, 5));
+            // Never read, and the daemon does not know it: it is missing now.
+            if (unknown === "unknown") this.onAgentEvent(b.agentId, status, false, "status-reconcile");
+            continue;
+          }
+          b.unknownReads = 0;
+          b.unknownReadAt = 0;
+          this.log(`status-reconcile ${b.agentId.slice(0, 8)} ${unknown} -> ${status} (the agent answers again)`);
+          // No turn is known to have ended: only the status, then anything that waited.
+          this.onAgentEvent(b.agentId, status, false, "status-reconcile");
+          if (status === "idle" && (b.introPending || b.queued.length || b.pendingText.size)) void this.flush(b, false);
+          continue;
+        }
         if (status === b.status || status === "running") continue;
         this.log(`status-reconcile ${b.agentId.slice(0, 8)} ${b.status} -> ${status} (missed lifecycle hook)`);
         this.onAgentEvent(b.agentId, status, status === "idle" || status === "error", "status-reconcile");
@@ -1833,13 +1887,109 @@ export class FrameWatcher {
     if (!b) return;
     if (bunnyEnv("DEBUG")) this.log(`event ${event} ${agentId.slice(0, 8)} → ${status}`);
     if (turnEnded) b.turnEnds++;
-    this.applyStatus(b, status);
+    this.agentStatus(b, status);
     if (turnEnded) void this.flush(b, false);
   }
 
-  private applyStatus(b: Binding, status: AgentStatus | FrameStatus): void {
+  // --- agent status through the lifecycle machine (shared/frame-lifecycle.ts) ------------
+  // Hooks, daemon re-reads, remote polls and the board's own sends all end here. The
+  // frame's stored fields say which state it is in and transition() says whether the event
+  // is a move from there.
+
+  // What the daemon (or a remote poll) says the agent is doing.
+  private agentStatus(b: Binding, status: AgentStatus | FrameStatus): void {
+    // "requested" is the board's own word, never an agent status: nothing to apply.
+    this.dispatchStatus(b, status === "requested" ? null : { type: "AGENT_STATUS", status });
+  }
+
+  // The board sent the agent a prompt: it is working before its own hook says so.
+  private promptSent(b: Binding): void {
+    this.dispatchStatus(b, { type: "PROMPT_SENT" });
+  }
+
+  // event null repaints only (subagents or cloud sessions changed): the status stays.
+  // - rejected: nothing is written; logged once per (state, event) and counted for the
+  //   parity report.
+  // - ignored (a hook while the frame is still starting or restarting): no status write,
+  //   only the repaint.
+  // - moved: the status the state stores and its colour, in one write; the binding's
+  //   status follows the stored one.
+  private rejectedMoves = new Set<string>();
+  private dispatchStatus(b: Binding, event: Extract<LifecycleEvent, { type: "AGENT_STATUS" | "PROMPT_SENT" }> | null): void {
+    if (this.stopped || !this.current(b)) return;
+    const room = this.host.get(b.boardId);
+    const frame = room.records.get(b.frameId);
+    if (!frame) return;
+    let state = stateOf(frame.meta?.paseo);
+    // A failed frame (a start, a remote start or a restart that did not finish) is still
+    // written by the old code: an agent status overwrites the failure, as before. Counted,
+    // so the parity report shows how often it happens.
+    if (state.s === "failed") {
+      if (event) this.parity?.note(SEEN.legacyStatusOnFailed);
+      this.applyStatusLegacy(b, !event ? b.status : event.type === "PROMPT_SENT" ? "running" : event.status);
+      return;
+    }
+    let moved = false;
+    if (event) {
+      const r = transition(state, event);
+      if (!r.ok) {
+        const what = `${lifecycleCode(state)}:${event.type}`;
+        this.parity?.note(`rejected:${what}`);
+        if (!this.rejectedMoves.has(what)) {
+          this.rejectedMoves.add(what);
+          this.log(`lifecycle: ${event.type} rejected for ${b.boardId}/${b.frameId} (${lifecycleCode(state)}): ${r.reason}`);
+        }
+        return;
+      }
+      if (!r.ignored && r.next.s !== "gone") {
+        state = r.next;
+        moved = true;
+      }
+    }
+    // An unbound frame has no status to paint (and is not painted black by a repaint).
+    if (state.s === "unbound") return;
+    const stored = frame.meta?.paseo?.status as FrameStatus | undefined;
+    const s: FrameStatus | undefined = moved ? legacyStatusOf(state) : stored;
+    if (moved && s) {
+      if (bunnyEnv("DEBUG") && b.status !== s) this.log(`status ${b.agentId.slice(0, 8)} ${b.status} -> ${s}`);
+      b.status = s;
+    }
+    const color = colourOf(state, { subagents: b.subagents, cloud: this.cloudIn(b) });
+    const subagents = b.subagents > 0 ? b.subagents : undefined;
+    const cloudSessions = this.cloudIn(b) || undefined;
+    // "missing" is stored beside status "error"; every other status write clears it.
+    const activity = moved ? storedActivityOf(state) : (frame.meta?.paseo?.activity as string | undefined);
+    if (stored === s && frame.meta?.paseo?.activity === activity && frame.props.color === color && frame.meta?.paseo?.subagents === subagents && frame.meta?.paseo?.cloudSessions === cloudSessions) return;
+    room.write({ kind: "server", reason: "status" }, (ops) => {
+      const cur = ops.get(b.frameId);
+      if (!cur) return;
+      const { subagents: _old, cloudSessions: _oldCloud, activity: _oldActivity, ...paseo } = cur.meta?.paseo ?? {};
+      ops.put({ ...cur, props: { ...cur.props, color }, meta: { ...cur.meta, paseo: { ...paseo, ...(moved && s ? { status: s } : {}), ...(activity ? { activity } : {}), ...(subagents ? { subagents } : {}), ...(cloudSessions ? { cloudSessions } : {}) } } });
+    });
+  }
+
+  // Still starting (or restarting): the conversation cannot take stamps, comments or deltas
+  // yet, and the frame cannot be unbound. The stored fields decide, not the status word: a
+  // bound agent that was not read yet is stored as "requested" too, and is not starting.
+  // A remote link still waits, in memory only, for its first af-network read (linkSync).
+  private startingNow(b: Binding): boolean {
+    const s = stateOf(this.frameMeta(b)).s;
+    return s === "starting" || s === "restarting" || (!!b.host && b.status === "requested");
+  }
+
+  // A bound agent the daemon called missing, or that has not been read: worth asking about
+  // again. A failed turn is neither.
+  private unreadActivity(b: Binding): "missing" | "unknown" | null {
+    const state = stateOf(this.frameMeta(b));
+    return state.s === "bound" && (state.activity === "missing" || state.activity === "unknown") ? state.activity : null;
+  }
+
+  // The writers that have not moved onto the lifecycle machine yet (bind, link, restart, a
+  // failed send): today's behaviour, unchanged. dispatchStatus replaces it writer by writer.
+  private applyStatusLegacy(b: Binding, status: AgentStatus | FrameStatus): void {
     if (this.stopped || !this.current(b)) return;
     const s: FrameStatus = status === "missing" ? "error" : status;
+    if (status === "missing") this.parity?.note(SEEN.missingAsError);
     if (bunnyEnv("DEBUG") && b.status !== s) this.log(`status ${b.agentId.slice(0, 8)} ${b.status} -> ${s}`);
     b.status = s;
     const room = this.host.get(b.boardId);
@@ -1848,12 +1998,15 @@ export class FrameWatcher {
     const color = this.frameColor(b);
     const subagents = b.subagents > 0 ? b.subagents : undefined;
     const cloudSessions = this.cloudIn(b) || undefined;
-    if (frame.meta?.paseo?.status === s && frame.props.color === color && frame.meta?.paseo?.subagents === subagents && frame.meta?.paseo?.cloudSessions === cloudSessions) return;
+    // activity ("missing", written by dispatchStatus beside status "error") must not sit
+    // stale beside another status: any write of a status other than error clears it.
+    const stale = s !== "error" && frame.meta?.paseo?.activity !== undefined;
+    if (frame.meta?.paseo?.status === s && !stale && frame.props.color === color && frame.meta?.paseo?.subagents === subagents && frame.meta?.paseo?.cloudSessions === cloudSessions) return;
     room.write({ kind: "server", reason: "status" }, (ops) => {
       const cur = ops.get(b.frameId);
       if (!cur) return;
-      const { subagents: _old, cloudSessions: _oldCloud, ...paseo } = cur.meta?.paseo ?? {};
-      ops.put({ ...cur, props: { ...cur.props, color }, meta: { ...cur.meta, paseo: { ...paseo, status: s, ...(subagents ? { subagents } : {}), ...(cloudSessions ? { cloudSessions } : {}) } } });
+      const { subagents: _old, cloudSessions: _oldCloud, activity: oldActivity, ...paseo } = cur.meta?.paseo ?? {};
+      ops.put({ ...cur, props: { ...cur.props, color }, meta: { ...cur.meta, paseo: { ...paseo, status: s, ...(s === "error" && oldActivity ? { activity: oldActivity } : {}), ...(subagents ? { subagents } : {}), ...(cloudSessions ? { cloudSessions } : {}) } } });
     });
   }
 
@@ -1925,14 +2078,16 @@ export class FrameWatcher {
       : [
           "Board tools (MCP server `board`, all scoped to your frame):",
           "- board_read({scope:'frame'|'board', format:'outline'|'json'}) — outline of your frame (default) or one line per frame for the whole board.",
+          "- board_snapshot({area?:{x,y,w,h}}) — a picture of your frame as the person sees it, drawn by a browser that has the board open (the outline cannot show crowding, long text or how the colours read). area shows one part of a large frame larger. It says so when the picture is not current.",
           "- board_write({shapes:[{type:'note'|'text'|'box'|'ellipse'|'arrow'|'frame'|'bookmark'|'link'|'checklist', x, y, w?, h?, text?, color?, from?, to?, url?, board?, frameId?, title?, items?, portal?}]}) — writes shapes, including portal stickies (a note with portal:{id} links another shape or frame). x/y are relative to your frame's top-left. Writes outside your frame, and writes that would overlap another shape, are rejected (the error names the next free slot). type:'link' with board (and frameId) is a card that opens another board or frame. A note may carry portal:{id} (any shape on the board, other frames too) or a page-space area portal:{x,y,w,h}: a sticky that links to related content elsewhere, which the person can jump to and back or expand in place.",
-          "- board_update({id, patch:{text?, color?, x?, y?, w?, h?, portal?}}) — changes a shape; patch.portal:{id:'shape:…'} turns a sticky into a portal (portal:null removes it), board_delete({ids}) — only shapes inside your frame; deleting a human's shape needs force:true.",
+          "- board_update({id, patch:{text?, color?, x?, y?, w?, h?, portal?, items?, title?}}) — changes a shape; on a checklist, patch.items:[{id, checked}] ticks items by id (also text, remove, or a new id with text to add one); patch.portal:{id:'shape:…'} turns a sticky into a portal (portal:null removes it), board_delete({ids}) — only shapes inside your frame; deleting a human's shape needs force:true.",
           `- board_layout({strategy:'grid'|'columns', ids?, gap?}) — re-flow your shapes so nothing overlaps (${this.cfg.humanName}'s shapes and cards stay put); grows your frame if needed.`,
           "- board_frame({resize?:{w,h,anchor?}, move?:'auto', name?}) — grow your frame (anchor 'top-right' grows left, 'bottom-left' grows up), move it to the nearest free spot that fits, or rename it. A blocked resize lists what is in the way and your options.",
           "- board_add_artifact({path|url, title}) — drop a PNG/JPG screenshot or a link card into your frame; board_add_artifact({kind:'file', path}) copies any other file (HTML report, transcript, PDF) into the board and links it.",
           "- board_widget({action:'list'|'add'|'configure'|'read', widgetId?, config?, id?, x?, y?}) — live plugin widgets (e.g. a Slack channel or thread) with a status dot; add one to your frame for the person, configure it, or read its status.",
           `- board_stamp({action:'list'|'ack'|'resolve'|'add', id?, target?, stamp?, note?}) — stamps ${this.cfg.humanName} attaches to shapes in your frame. Each arrives at once as a message starting "Stamp <kind> on …" with a JSON event, even while you work. Fixed meanings: ${stampMeanings()}. ack one when you start on it and resolve it when handled (${this.cfg.humanName} sees sent → seen → acting → done on the stamp); add puts your own stamp on a shape in your frame.`,
           "- board_pin_transcript({agentId, mode?:'compact'|'full', x?, y?}) — pin a live transcript card of another agent (a subagent in your workspace, or an agent bound on this board) into your frame. board_read then shows its latest messages.",
+          "- board_channel({action:'list'|'send', channelId?, messageId?, text?}) — arrow channels: when someone connects your frame to another frame with an arrow channel, you get a \"Channel opened\" message. list shows your active channels and their member frames; send delivers one message (stable messageId) to the other frame's agent. The arrow is the person's approval: coordinate without asking them, starting with what you are working on and what you need; transcripts are never forwarded automatically.",
           `- board_archive_candidates({idleDays?}) and board_archive({frameIds, reason}) — only when ${this.cfg.humanName} asks you to tidy the board: list stale frames with reasons, then propose archiving some. A proposal archives nothing until ${this.cfg.humanName} approves it on the board; archived frames can be restored.`,
           "",
           "Placing shapes: a sticky (note) is 200 px wide and holds about 12 words; longer text makes it grow about 30 px per line. Put stickies on the 240 px grid: x = 20, 260, 500, 740, …; y = 50, 290, 530, … (the outline lists free slots), or omit x/y to auto-place. Keep each sticky to one short headline (under about 8 words); put detail in your chat reply or a second sticky. Cards in your frame are occupied space: write around them. If things overlap, call board_layout. Portals: when a topic needs more room than your frame has, or relates to another frame, link it with a portal sticky instead of cramming or growing the frame: put the detail where there is room and leave a note here, board_write({shapes:[{type:'note',text:'Details →',portal:{id:'shape:…'}}]}), or turn an existing sticky into one with board_update({id,patch:{portal:{id:'shape:…'}}}). The person opens it in place or jumps there and back; board_read lists portals both ways.",
@@ -1950,9 +2105,11 @@ export class FrameWatcher {
       BOARD_SYSTEM_PROMPT,
       "",
       ...(cloud ? [this.cloudPath(cloud === true ? "claude" : cloud), ""] : []),
-      `How to work: start your first reply by restating what is in your frame (quote the notes), then answer. Put the useful result on the board too: write a sticky or a few shapes inside your frame. Later, when ${this.cfg.humanName} edits your frame, you will get a message starting with "Board delta". Deltas are context, not requests: reply (in chat or on the board) only when one asks you something, asks you to do something, or changes your task. Otherwise write nothing on the board and reply with exactly one word: ${SILENT_ACK}.`,
+      frameUpkeep(this.cfg.humanName),
+      "",
+      `How to work: start your first reply by restating what is in your frame (quote the notes), then answer. Put the useful result on the board too, laid out as above: at least the status line and the result. Later, when ${this.cfg.humanName} edits your frame, you will get a message starting with "Board delta". Deltas are context, not requests: reply (in chat or on the board) only when one asks you something, asks you to do something, or changes your task. Otherwise write nothing on the board and reply with exactly one word: ${SILENT_ACK}.`,
       frame.props.name ? `Frame title: ${quote(frame.props.name)}.` : "",
-      `Naming: the frame title is also this conversation's name in Paseo (they stay in sync). ${isGenericName(frame.props.name) ? "It is a placeholder: rename" : "If it no longer says what this task is, rename"} it with ${viaHttp ? "POST {name} to /frame" : "board_frame({name})"} to a short title (under about 6 words) once you know the task.`,
+      `Naming: the frame title is also this conversation's name in Paseo (they stay in sync). ${isGenericName(frame.props.name) ? "It is a placeholder: rename" : isProvisionalName(frame.props.name, frame.meta?.paseo?.autoName) ? "It is only a provisional title cut from the first line of the request: rename" : "If it no longer says what this task is, rename"} it with ${viaHttp ? "POST {name} to /frame" : "board_frame({name})"} to a short title (under about 6 words) once you know the task.`,
     ]
       .filter((l) => l !== null)
       .join("\n");
@@ -1962,10 +2119,15 @@ export class FrameWatcher {
     const t = frameToken(this.cfg.secret, boardId, frameId, agentId);
     const base = `http://127.0.0.1:${this.cfg.port}/api/agent/boards/${boardId}/frames/${frameId}`;
     return [
-      "You were linked to this frame after your session started, so you do not have the board MCP tools. Use HTTP instead (same rules, scoped to this frame):",
+      // Only remote starts use this primer: the agent was created for this frame, on another
+      // machine that has no board MCP executable. (It once said "linked after your session
+      // started", which told freshly created agents they had joined late.)
+      "You were created for this frame on another machine, where the board MCP server is not installed, so the board tools reach you over HTTP instead (same rules, scoped to this frame):",
       `- read:  curl -s -H 'authorization: Bearer ${t}' '${base}/read?format=outline'`,
       `- write: curl -s -H 'authorization: Bearer ${t}' -H 'content-type: application/json' -d '{"shapes":[{"type":"note","x":40,"y":60,"text":"hi"}]}' ${base}/write`,
       `- update/delete/frame/pin/widget/stamp: POST JSON to ${base}/update | /delete | /frame | /pin | /widget | /stamp (bodies match the MCP tools; /pin is board_pin_transcript, /widget is board_widget, /stamp is board_stamp).`,
+      `- snapshot: POST {} (or {"area":{"x":0,"y":0,"w":800,"h":600}}) to ${base}/snapshot for a picture of your frame as the person sees it: the reply's "data" is a base64 PNG (save it to a file and view it) and "note" says whether it is current.`,
+      `- arrow channels: POST {"action":"list"} to ${base}/channel to see channels connecting your frame to another frame (a "Channel opened" message announces each); POST {"action":"send","channelId":"…","messageId":"<stable id>","text":"…"} sends one message to the other frame's agent. The arrow is the person's approval: coordinate without asking them; transcripts are never forwarded automatically.`,
       `- Stamps on shapes in your frame arrive as messages starting "Stamp <kind> on …". Fixed meanings: ${stampMeanings()}. POST {action:"ack"|"resolve", id} to ${base}/stamp as you start on and finish each.`,
       `- board clean-up (only when asked): POST JSON to ${base}/archive-candidates | /archive (board_archive_candidates, board_archive: a proposal ${this.cfg.humanName} approves on the board).`,
     ].join("\n");
@@ -2072,7 +2234,8 @@ export class FrameWatcher {
       room.write({kind:'server',reason:'remote-start-intent'},ops=>{const f=ops.get(frameId)!;ops.put({...f,meta:{...f.meta,paseo:{...f.meta?.paseo,remoteStart:JSON.parse(JSON.stringify(value)),...(created?{agentId:value.agentId,host:value.host,workspaceId:value.payload?.workspaceId}:{})}}});});room.save();
     };
     persist(intent);
-    const title=cleanName(frame.props.name)||nameFromRequest(req.prompt)||`Board ${room.id} frame`;
+    const named=startName(frame.props.name,req.prompt);
+    const title=named.name||cleanName(frame.props.name)||`Board ${room.id} frame`;
     const chosen=executionProvider(resolveStartProvider(req.provider||this.cfg.defaultProvider,this.cfg.defaultProvider),this.cfg.defaultProvider,req.host);
     // HTTP tools use the environment's reachable address; no local paths or MCP
     // executables are sent to another Mac.
@@ -2081,7 +2244,7 @@ export class FrameWatcher {
     await this.remote.createOnHost(intent,{provider:chosen,title,prompt,modeId:this.modeFor(chosen),...(thinkingOptionId?{thinkingOptionId}:{}),labels:{board:room.id,frame:frameId,workRef:`bunny/${room.id}/${frameId}`}},persist);
     if(this.stopped||room.closed||!room.records.has(frameId))return;
     this.adoptEnclosed(room,frameId,null);
-    const b=this.linkSync(room,frameId,{id:intent.agentId,title,workspaceId:intent.payload?.workspaceId??null,status:'running',host:intent.host});
+    const b=this.linkSync(room,frameId,{id:intent.agentId,title,workspaceId:intent.payload?.workspaceId??null,status:'running',host:intent.host},named.auto?title:undefined);
     this.remote.quickRefresh(intent.agentId);
     this.reserved.delete(intent.agentId);
     b.introPending=false;
@@ -2189,7 +2352,8 @@ export class FrameWatcher {
     this.adoptEnclosed(room, frameId, null);
     const frame = room.records.get(frameId)!;
     // An untitled frame is named from its request until the agent names it properly.
-    const title = cleanName(frame.props.name) || nameFromRequest(line) || nameFromRequest(this.firstNoteText(room, frameId)) || `Board ${room.id} frame`;
+    const named = startName(frame.props.name, line, this.firstNoteText(room, frameId));
+    const title = named.name || cleanName(frame.props.name) || `Board ${room.id} frame`;
     let startup = cwd ? {context: "repo" as const, cwd, systemPrompt: undefined} : agentContext(this.cfg, room.id, frame, context, workspaceId);
     // Choose the agent id first and write it into the frame before creating the
     // agent: the frame token names the agent, early tool calls resolve, and a
@@ -2271,7 +2435,7 @@ export class FrameWatcher {
           props: { ...cur.props, name: title },
           meta: {
             ...cur.meta,
-            paseo: { ...cur.meta?.paseo, syncedName: existing ? cur.meta?.paseo?.syncedName : title, ...(cloud ? { cloud: true, cloudProvider: cloud } : {}), request: undefined, error: undefined, relink: undefined, agentId, workspaceId: workspace, mode: cur.meta?.paseo?.mode ?? "live", boundAt: Date.now() },
+            paseo: { ...cur.meta?.paseo, syncedName: existing ? cur.meta?.paseo?.syncedName : title, autoName: existing ? cur.meta?.paseo?.autoName : named.auto ? title : undefined, ...(cloud ? { cloud: true, cloudProvider: cloud } : {}), request: undefined, error: undefined, relink: undefined, agentId, workspaceId: workspace, mode: cur.meta?.paseo?.mode ?? "live", boundAt: Date.now() },
           },
         });
       const doc = ops.get("document:document");
@@ -2280,7 +2444,7 @@ export class FrameWatcher {
     });
     this.autoPinTranscript(room, frameId, agentId);
     room.save();
-    this.applyStatus(b, status === "missing" ? "error" : status);
+    this.applyStatusLegacy(b, status === "missing" ? "error" : status);
   }
 
   // Legacy path: a canvas wrote request {kind:"link"} into a frame (old tabs; the
@@ -2306,6 +2470,7 @@ export class FrameWatcher {
     room: BoardRoom,
     frameId: string,
     agent: { id: string; title: string | null; workspaceId: string | null; status: FrameStatus; labels?: Record<string, string> | null; host?: string | null },
+    autoName?: string,
   ): Binding {
     const frame = room.records.get(frameId);
     if (!frame || frame.type !== "frame") throw httpError(404, `frame ${frameId} is not on board ${room.id}`);
@@ -2321,11 +2486,13 @@ export class FrameWatcher {
       if (!f) return;
       ops.put({
         ...f,
-        props: { ...f.props, name: f.props.name || (agent.title ?? "").slice(0, 80) || agent.id.slice(0, 8), color: this.frameColor(b) },
+        // A placeholder frame ("New agent") takes the conversation's own title.
+        props: { ...f.props, name: (isGenericName(f.props.name) ? "" : f.props.name) || cleanName(agent.title) || f.props.name || agent.id.slice(0, 8), color: this.frameColor(b) },
         meta: {
           ...f.meta,
           paseo: {
             ...f.meta?.paseo,
+            ...(autoName ? { autoName } : {}),
             request: undefined,
             remoteStart: undefined,
             error: undefined,
@@ -2424,7 +2591,7 @@ export class FrameWatcher {
     if(this.bindingFor(room.id,frameId)!==old || !latest || statusOf(latest.agent)!=='idle')
       throw httpError(409,"The conversation changed or started working during handoff; let it finish before restarting");
     const newId = randomUUID();
-    const title = (frame.props.name?.trim() || a.title || `Board ${room.id} frame`).slice(0, 80);
+    const title = ((isGenericName(frame.props.name) ? "" : frame.props.name?.trim()) || a.title || frame.props.name?.trim() || `Board ${room.id} frame`).slice(0, 80);
     const carried = old.queued.splice(0);
     const prevMeta = JSON.parse(JSON.stringify(p)) as FramePaseoMeta;
     const prevColor = frame.props.color;
@@ -2517,7 +2684,7 @@ export class FrameWatcher {
       throw httpError(409, 'frame was deleted or rebound during restart; new conversation remains released');
     }
     this.finishRestart(room, frameId, oldId, newId, workspaceId);
-    this.applyStatus(nb, "running");
+    this.applyStatusLegacy(nb, "running");
     this.log(`restarted ${room.id}/${frameId}: ${oldId} → ${newId} with board tools${opts.archiveOld ? " (archiving the old agent)" : ""}`);
     let archivedOld = false;
     if (opts.archiveOld) {
@@ -2643,7 +2810,8 @@ export class FrameWatcher {
     return frameOutline(this.host.get(boardId).records, frameId, this.outlineCtx());
   }
 
-  boardOutline(boardId: string, frameId?: string): string {
-    return boardOutline(this.host.get(boardId).records, frameId);
+  // query: only the frames whose name or agent title contains every term (outline.ts).
+  boardOutline(boardId: string, frameId?: string, query?: string, pageId?: string): string {
+    return boardOutline(this.host.get(boardId).records, frameId, { query, pageId, ctx: this.outlineCtx(), titleOf: (id) => this.paseoTitles.get(id) });
   }
 }
